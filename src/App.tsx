@@ -5,10 +5,12 @@ import {
   FolderKanban,
   History,
   LayoutDashboard,
+  Menu,
   Package,
   Phone,
   Settings as SettingsIcon,
   Globe,
+  X,
 } from 'lucide-react';
 import {
   AppSettings,
@@ -62,6 +64,7 @@ export default function App() {
   const [library, setLibrary] = useState<PackageSpec[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [pendingDelete, setPendingDelete] = useState<{
     type: 'project' | 'product';
@@ -310,7 +313,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-zinc-50 text-zinc-900">
+    <div className="min-h-[100dvh] flex flex-col md:flex-row bg-zinc-50 text-zinc-900">
       {/* Desktop Sidebar (White & Red) */}
       <aside className="hidden md:flex md:w-60 lg:w-64 md:flex-col md:fixed md:inset-y-0 bg-white text-zinc-900 border-e border-zinc-200 z-30 no-print">
         <div className="h-14 px-5 flex items-center justify-between border-b border-zinc-200">
@@ -396,46 +399,84 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Mobile Compact Header (<56px) */}
-      <header className="md:hidden sticky top-0 z-30 h-13 bg-white text-zinc-900 px-4 flex items-center justify-between border-b border-zinc-200 no-print">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-red-600 text-white">
-            <Box className="w-3.5 h-3.5" />
-          </span>
-          <span className="text-sm font-bold tracking-tight whitespace-nowrap">
-            {t(settings.language, 'appName')}
-          </span>
+      {/* Mobile Compact Header + Full Drawer Trigger */}
+      <header className="md:hidden sticky top-0 z-30 pt-[env(safe-area-inset-top)] bg-white text-zinc-900 border-b border-zinc-200 no-print">
+        <div className="h-13 px-3 sm:px-4 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+              aria-label="Menu"
+              className="p-1.5 rounded-md text-zinc-700 hover:bg-red-50 hover:text-red-600 cursor-pointer shrink-0"
+            >
+              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
+            <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-red-600 text-white shrink-0">
+              <Box className="w-3.5 h-3.5" />
+            </span>
+            <span className="text-sm font-bold tracking-tight truncate">
+              {t(settings.language, 'appName')}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <select
+              value={settings.lengthUnit}
+              onChange={(e) =>
+                updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
+              }
+              className="rounded bg-zinc-50 border border-zinc-300 px-1.5 py-1 text-xs font-mono text-zinc-800"
+            >
+              <option value="mm">mm</option>
+              <option value="cm">cm</option>
+              <option value="m">m</option>
+              <option value="in">in</option>
+            </select>
+            <button
+              onClick={() =>
+                updateSettings({
+                  ...settings,
+                  language: settings.language === 'en' ? 'ar' : 'en',
+                })
+              }
+              className="rounded bg-zinc-50 border border-zinc-300 px-2 py-1 text-xs font-semibold text-red-600 cursor-pointer"
+            >
+              {settings.language === 'en' ? 'AR' : 'EN'}
+            </button>
+            <PWAInstallButton language={settings.language} compact />
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={settings.lengthUnit}
-            onChange={(e) =>
-              updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
-            }
-            className="rounded bg-zinc-50 border border-zinc-300 px-2 py-1 text-xs font-mono text-zinc-800"
-          >
-            <option value="mm">mm</option>
-            <option value="cm">cm</option>
-            <option value="m">m</option>
-            <option value="in">in</option>
-          </select>
-          <button
-            onClick={() =>
-              updateSettings({
-                ...settings,
-                language: settings.language === 'en' ? 'ar' : 'en',
-              })
-            }
-            className="rounded bg-zinc-50 border border-zinc-300 px-2 py-1 text-xs font-semibold text-red-600"
-          >
-            {settings.language === 'en' ? 'AR' : 'EN'}
-          </button>
-          <PWAInstallButton language={settings.language} />
-        </div>
+
+        {mobileMenuOpen && (
+          <div className="border-t border-zinc-200 bg-white px-3 py-3 space-y-2 shadow-lg">
+            <div className="grid grid-cols-2 gap-1.5">
+              {navItems.map((item) => {
+                const active = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      active
+                        ? 'bg-red-600 text-white font-semibold'
+                        : 'bg-zinc-50 text-zinc-700 hover:bg-red-50 hover:text-red-700'
+                    }`}
+                  >
+                    {item.icon}
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 md:ms-60 lg:ms-64 p-4 sm:p-6 pb-24 md:pb-8 max-w-[1600px] w-full">
+      <main className="flex-1 min-w-0 md:ms-60 lg:ms-64 p-3 sm:p-5 lg:p-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 max-w-[1920px] w-full">
         {activeTab === 'dashboard' && (
           <DashboardView
             projects={projects}
@@ -542,31 +583,36 @@ export default function App() {
         </footer>
       </main>
 
-      {/* Mobile Bottom Navigation Bar (5 thumb-friendly tabs, <= 56px) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white text-zinc-500 border-t border-zinc-200 grid grid-cols-5 items-center no-print shadow-sm">
-        {(
-          [
-            { id: 'dashboard', label: t(settings.language, 'dashboard'), icon: <LayoutDashboard className="w-4 h-4" /> },
-            { id: 'workspace', label: settings.language === 'ar' ? 'العرض 3D' : '3D', icon: <Box className="w-4 h-4" /> },
-            { id: 'projects', label: t(settings.language, 'projects'), icon: <FolderKanban className="w-4 h-4" /> },
-            { id: 'library', label: t(settings.language, 'library'), icon: <Package className="w-4 h-4" /> },
-            { id: 'settings', label: t(settings.language, 'settings'), icon: <SettingsIcon className="w-4 h-4" /> },
-          ] as const
-        ).map((item) => {
-          const active = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center justify-center h-full px-1 ${
-                active ? 'text-red-600 font-semibold' : 'text-zinc-500'
-              }`}
-            >
-              {item.icon}
-              <span className="text-[10px] mt-0.5 truncate max-w-full">{item.label}</span>
-            </button>
-          );
-        })}
+      {/* Mobile Bottom Navigation Bar (thumb-friendly + iOS/Android safe-area) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)] bg-white text-zinc-500 border-t border-zinc-200 no-print shadow-sm">
+        <div className="h-14 grid grid-cols-5 items-center">
+          {(
+            [
+              { id: 'dashboard', label: t(settings.language, 'dashboard'), icon: <LayoutDashboard className="w-4 h-4" /> },
+              { id: 'workspace', label: settings.language === 'ar' ? 'العرض 3D' : '3D', icon: <Box className="w-4 h-4" /> },
+              { id: 'projects', label: t(settings.language, 'projects'), icon: <FolderKanban className="w-4 h-4" /> },
+              { id: 'library', label: t(settings.language, 'library'), icon: <Package className="w-4 h-4" /> },
+              { id: 'reports', label: t(settings.language, 'reports'), icon: <BarChart3 className="w-4 h-4" /> },
+            ] as const
+          ).map((item) => {
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setMobileMenuOpen(false);
+                }}
+                className={`flex flex-col items-center justify-center h-full px-1 cursor-pointer ${
+                  active ? 'text-red-600 font-semibold' : 'text-zinc-500'
+                }`}
+              >
+                {item.icon}
+                <span className="text-[10px] mt-0.5 truncate max-w-full">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </nav>
 
       {/* Delete Confirmation Modal */}

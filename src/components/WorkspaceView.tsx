@@ -1733,14 +1733,14 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               mobileSection === '3d' ? 'block' : 'hidden md:block'
             } ${
               mobileFullscreen3D
-                ? 'fixed inset-0 z-50 bg-zinc-900 p-2'
-                : 'h-[480px] xl:h-[580px]'
+                ? 'fixed inset-0 z-50 bg-zinc-900 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))]'
+                : 'h-[52dvh] min-h-[300px] sm:h-[400px] md:h-[460px] lg:h-[520px] xl:h-[600px] 2xl:h-[680px]'
             }`}
           >
             {mobileFullscreen3D && (
               <button
                 onClick={() => setMobileFullscreen3D(false)}
-                className="fixed top-4 right-4 z-50 rounded-lg bg-red-600 text-white px-3 py-1.5 text-xs font-semibold shadow-lg cursor-pointer"
+                className="fixed top-[max(1rem,env(safe-area-inset-top))] right-4 z-50 rounded-lg bg-red-600 text-white px-3 py-1.5 text-xs font-semibold shadow-lg cursor-pointer"
               >
                 {t(language, 'close')}
               </button>

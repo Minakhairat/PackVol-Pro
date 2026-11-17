@@ -1245,12 +1245,12 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
 
     return (
       <div
-        className={`relative w-full h-full min-h-[380px] bg-[#eef0f3] rounded-xl overflow-hidden border border-zinc-200 select-none ${
+        className={`relative w-full h-full min-h-[280px] sm:min-h-[360px] bg-[#eef0f3] rounded-xl overflow-hidden border border-zinc-200 select-none ${
           manualMode && manualTool === 'place' && manualActiveSpec ? 'cursor-crosshair' : ''
         }`}
       >
         {/* WebGL Canvas Mount */}
-        <div ref={mountRef} className="w-full h-full" />
+        <div ref={mountRef} className="w-full h-full touch-none" />
 
         {(contextLost || webglError) && (
           <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/85 text-white p-6 text-center z-20">
@@ -1273,9 +1273,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
         )}
 
         {/* Top-Left Minimal Spec Readout (White & Red theme) */}
-        <div className="absolute top-3 left-3 z-10 pointer-events-none flex flex-col gap-1.5">
+        <div className="absolute top-3 left-3 z-10 pointer-events-none flex flex-col gap-1.5 max-w-[calc(100%-96px)] sm:max-w-[290px]">
           <div className="bg-white/95 text-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-200 shadow-sm pointer-events-auto">
-            <div className="text-xs font-bold tracking-tight text-zinc-900">{spaceDisplayName}</div>
+            <div className="text-xs font-bold tracking-tight text-zinc-900 truncate">{spaceDisplayName}</div>
             <div className="text-[11px] font-mono text-zinc-600 tabular-nums mt-0.5">
               {formatDims(space.internalLength, space.internalWidth, space.internalHeight, lengthUnit)}
               {' · '}

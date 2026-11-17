@@ -1,71 +1,140 @@
 import React, { useState } from 'react';
-import { Download, WifiOff, X } from 'lucide-react';
+import { Download, Monitor, Smartphone, WifiOff, X } from 'lucide-react';
 import { useOnlineStatus, usePWAInstall } from '../hooks/usePWAInstall';
 import { Language } from '../types/packvol';
 import { t } from '../i18n/translations';
 
-export const PWAInstallButton: React.FC<{ language: Language }> = ({ language }) => {
-  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
-  const [showIOSGuide, setShowIOSGuide] = useState(false);
+export const PWAInstallButton: React.FC<{ language: Language; compact?: boolean }> = ({
+  language,
+  compact = false,
+}) => {
+  const { isInstallable, isInstalled, isIOS, platform, install } = usePWAInstall();
+  const [showGuide, setShowGuide] = useState(false);
 
   if (isInstalled) return null;
 
-  if (isInstallable) {
-    return (
+  const isAr = language === 'ar';
+
+  const handleClick = async () => {
+    if (isInstallable) {
+      const accepted = await install();
+      if (accepted) return;
+    }
+    setShowGuide(true);
+  };
+
+  return (
+    <>
       <button
-        onClick={install}
-        className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        type="button"
+        onClick={() => void handleClick()}
+        title={t(language, 'installApp')}
+        className={`inline-flex items-center justify-center gap-1.5 rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          compact
+            ? 'px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white hover:bg-red-700'
+            : 'w-full px-3 py-2 text-xs font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm'
+        }`}
       >
-        <Download className="w-3.5 h-3.5" />
-        <span>{t(language, 'installApp')}</span>
+        <Download className="w-3.5 h-3.5 shrink-0" />
+        <span className={compact ? 'hidden xs:inline sm:inline' : ''}>{t(language, 'installApp')}</span>
       </button>
-    );
-  }
 
-  if (isIOS) {
-    return (
-      <>
-        <button
-          onClick={() => setShowIOSGuide(true)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>{t(language, 'installApp')}</span>
-        </button>
-
-        {showIOSGuide && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-            <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl border border-zinc-200">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-semibold text-zinc-900">
-                  {language === 'ar' ? 'التثبيت على iPhone / iPad' : 'Install PackVol Pro on iOS'}
+      {showGuide && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl border border-zinc-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+              <div className="flex items-center gap-2">
+                {platform === 'windows' || platform === 'desktop' ? (
+                  <Monitor className="w-4 h-4 text-red-600" />
+                ) : (
+                  <Smartphone className="w-4 h-4 text-red-600" />
+                )}
+                <h3 className="text-sm font-bold text-zinc-900">
+                  {isAr ? 'تثبيت PackVol Pro كتطبيق مستقل' : 'Install PackVol Pro App'}
                 </h3>
-                <button
-                  onClick={() => setShowIOSGuide(false)}
-                  className="p-1.5 rounded-md text-zinc-500 hover:bg-zinc-100"
-                >
-                  <X className="w-4 h-4" />
-                </button>
               </div>
-              <p className="text-sm text-zinc-600 leading-relaxed">
-                {language === 'ar'
-                  ? '1. اضغط على زر المشاركة في شريط Safari.\n2. مرر لأسفل واختر "إضافة إلى الشاشة الرئيسية".'
-                  : '1. Tap the Share icon in the Safari toolbar.\n2. Scroll down and select "Add to Home Screen".'}
-              </p>
               <button
-                onClick={() => setShowIOSGuide(false)}
-                className="mt-4 w-full rounded-lg bg-red-600 py-2.5 text-sm font-semibold text-white hover:bg-red-700 cursor-pointer"
+                type="button"
+                onClick={() => setShowGuide(false)}
+                className="p-1 rounded-md text-zinc-500 hover:bg-zinc-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-zinc-700 leading-relaxed">
+              {(platform === 'windows' || platform === 'desktop') && (
+                <div className="rounded-lg border border-red-200 bg-red-50/70 p-3 space-y-1">
+                  <div className="font-bold text-red-700">
+                    {isAr ? 'على الكمبيوتر (Windows / Chrome / Edge)' : 'Windows / Desktop (Chrome / Edge)'}
+                  </div>
+                  <p>
+                    {isAr
+                      ? '1. اضغط على أيقونة التثبيت (⊕) في شريط العنوان أعلى المتصفح، أو افتح قائمة المتصفح (⋮ / ⋯).\n2. اختر "التطبيقات" ثم "تثبيت PackVol Pro" ليفتح كبرنامج مستقل على سطح المكتب ويعمل بدون إنترنت.'
+                      : '1. Click the Install icon in the browser address bar, or open the browser menu (⋮ / ⋯).\n2. Select "Install PackVol Pro" to run as a standalone Windows desktop app with offline support.'}
+                  </p>
+                </div>
+              )}
+
+              {platform === 'android' && (
+                <div className="rounded-lg border border-red-200 bg-red-50/70 p-3 space-y-1">
+                  <div className="font-bold text-red-700">
+                    {isAr ? 'على موبايل Android (Chrome)' : 'Android (Chrome)'}
+                  </div>
+                  <p>
+                    {isAr
+                      ? '1. افتح قائمة المتصفح (⋮) أعلى الشاشة.\n2. اختر "تثبيت التطبيق" أو "إضافة إلى الشاشة الرئيسية" لتشغيله بملء الشاشة وبدون إنترنت.'
+                      : '1. Tap the browser menu (⋮) in Chrome.\n2. Tap "Install app" or "Add to Home screen" for standalone offline access.'}
+                  </p>
+                </div>
+              )}
+
+              {(isIOS || platform === 'ios') && (
+                <div className="rounded-lg border border-red-200 bg-red-50/70 p-3 space-y-1">
+                  <div className="font-bold text-red-700">
+                    {isAr ? 'على iPhone / iPad (Safari)' : 'iPhone / iPad (Safari)'}
+                  </div>
+                  <p>
+                    {isAr
+                      ? '1. افتح الموقع في متصفح Safari واضغط على زر المشاركة (Share) أسفل أو أعلى الشاشة.\n2. مرر للأسفل واختر "إضافة إلى الشاشة الرئيسية" (Add to Home Screen).'
+                      : '1. Open in Safari and tap the Share button.\n2. Scroll down and tap "Add to Home Screen".'}
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-[11px] text-zinc-600">
+                {isAr
+                  ? 'يعمل التطبيق بكامل ميزاته وحساباته ثلاثية الأبعاد وتخزين المشاريع محلياً على الجهاز حتى بدون اتصال بالإنترنت.'
+                  : 'Once installed, all 3D cargo calculations, projects, and Excel/PDF exports work offline locally on your device.'}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              {isInstallable && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await install();
+                    if (ok) setShowGuide(false);
+                  }}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
+                >
+                  {isAr ? 'تثبيت فوري الآن' : 'Install Now'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowGuide(false)}
+                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer"
               >
                 {t(language, 'close')}
               </button>
             </div>
           </div>
-        )}
-      </>
-    );
-  }
-
-  return null;
+        </div>
+      )}
+    </>
+  );
 };
 
 export const OfflineIndicator: React.FC<{ language: Language }> = ({ language }) => {
@@ -73,7 +142,7 @@ export const OfflineIndicator: React.FC<{ language: Language }> = ({ language })
   if (isOnline) return null;
 
   return (
-    <div className="fixed bottom-20 md:bottom-4 left-4 z-40 flex items-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-md">
+    <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-4 left-4 z-40 flex items-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-md">
       <WifiOff className="w-3.5 h-3.5 shrink-0" />
       <span>{t(language, 'offlineBanner')}</span>
     </div>

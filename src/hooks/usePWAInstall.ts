@@ -5,19 +5,37 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+export type InstallPlatform = 'windows' | 'android' | 'ios' | 'desktop';
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [platform, setPlatform] = useState<InstallPlatform>('desktop');
 
   useEffect(() => {
-    const isStandalone =
+    const checkStandalone = () =>
       window.matchMedia('(display-mode: standalone)').matches ||
+      window.matchMedia('(display-mode: window-controls-overlay)').matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-    setIsInstalled(isStandalone);
+
+    setIsInstalled(checkStandalone());
 
     const ua = window.navigator.userAgent.toLowerCase();
-    setIsIOS(/iphone|ipad|ipod/.test(ua));
+    const isAppleMobile =
+      /iphone|ipad|ipod/.test(ua) ||
+      (ua.includes('macintosh') && navigator.maxTouchPoints > 1);
+    setIsIOS(isAppleMobile);
+
+    if (isAppleMobile) {
+      setPlatform('ios');
+    } else if (/android/.test(ua)) {
+      setPlatform('android');
+    } else if (/win/.test(ua)) {
+      setPlatform('windows');
+    } else {
+      setPlatform('desktop');
+    }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
@@ -29,12 +47,17 @@ export function usePWAInstall() {
       setDeferredPrompt(null);
     };
 
+    const mediaStandalone = window.matchMedia('(display-mode: standalone)');
+    const handleDisplayChange = () => setIsInstalled(checkStandalone());
+
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
+    mediaStandalone.addEventListener?.('change', handleDisplayChange);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      mediaStandalone.removeEventListener?.('change', handleDisplayChange);
     };
   }, []);
 
@@ -54,6 +77,7 @@ export function usePWAInstall() {
     isInstallable: !!deferredPrompt,
     isInstalled,
     isIOS,
+    platform,
     install,
   };
 }

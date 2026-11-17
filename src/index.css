@@ -22,9 +22,12 @@
   }
 
   body {
-    background-color: #f4f4f5;
+    min-height: 100dvh;
+    background-color: #fafafa;
     color: #18181b;
     overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    -webkit-tap-highlight-color: transparent;
   }
 }
 
