@@ -50,6 +50,7 @@ import { SpaceConfigPanel } from './SpaceConfigPanel';
 import { PackageFormModal } from './PackageFormModal';
 import { Viewport3D, Viewport3DHandle } from './Viewport3D';
 import { Views2D } from './Views2D';
+import { CompactReportPanel } from './CompactReportPanel';
 import {
   exportToCsv,
   exportToExcel,
@@ -114,7 +115,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [showAddContainerModal, setShowAddContainerModal] = useState(false);
   const [mobileSection, setMobileSection] = useState<'setup' | '3d' | 'results'>('3d');
-  const [resultTab, setResultTab] = useState<'summary' | 'views2d' | 'sequence' | 'strategies'>('summary');
+  const [resultTab, setResultTab] = useState<'summary' | 'compact' | 'views2d' | 'sequence' | 'strategies'>('summary');
   const [mobileFullscreen3D, setMobileFullscreen3D] = useState(false);
 
   // Optimization worker state
@@ -2004,6 +2005,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   {(
                     [
                       ['summary', t(language, 'resultsSummary')],
+                      ['compact', t(language, 'compactReportShort')],
                       ['views2d', t(language, 'views2D')],
                       ['sequence', t(language, 'loadingSequence')],
                       ['strategies', t(language, 'strategyComparison')],
@@ -2225,6 +2227,17 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {resultTab === 'compact' && (
+                    <CompactReportPanel
+                      project={project}
+                      result={result}
+                      lengthUnit={lengthUnit}
+                      weightUnit={weightUnit}
+                      language={language}
+                      activeContainerIdx={activeContainerIdx}
+                    />
                   )}
 
                   {resultTab === 'views2d' && (

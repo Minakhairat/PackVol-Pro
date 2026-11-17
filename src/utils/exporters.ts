@@ -845,6 +845,54 @@ function drawTruncatedText(
   ctx.fillText(trimmed + '…', x, y);
 }
 
+function wrapCanvasLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] {
+  const safeMax = Math.max(24, maxWidth);
+  const paragraphs = String(text ?? '').split('\n');
+  const lines: string[] = [];
+
+  for (const para of paragraphs) {
+    const words = para.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) {
+      lines.push('');
+      continue;
+    }
+    let current = '';
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (ctx.measureText(candidate).width <= safeMax) {
+        current = candidate;
+      } else {
+        if (current) {
+          lines.push(current);
+          current = '';
+        }
+        if (ctx.measureText(word).width <= safeMax) {
+          current = word;
+        } else {
+          // Break single oversized token across characters
+          let chunk = '';
+          for (const ch of word) {
+            if (ctx.measureText(chunk + ch).width <= safeMax) {
+              chunk += ch;
+            } else {
+              if (chunk) lines.push(chunk);
+              chunk = ch;
+            }
+          }
+          current = chunk;
+        }
+      }
+    }
+    if (current) lines.push(current);
+  }
+
+  return lines.length > 0 ? lines : [''];
+}
+
 export async function exportToPdf(
   project: Project,
   result: OptimizationResult,
@@ -1298,6 +1346,672 @@ export async function exportToPdf(
   });
 
   doc.save(`PackVolPro_Report_${safeFilePart(projName)}.pdf`);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Compact Aggregated Report (1 row per item/SKU with total loaded quantities)*/
+/* -------------------------------------------------------------------------- */
+
+export interface CompactReportRow {
+  packageId: string;
+  sku: string;
+  name: string;
+  color: string;
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+  unitWeightKg: number;
+  requestedQty: number;
+  loadedQty: number;
+  unloadedQty: number;
+  totalWeightKg: number;
+  totalVolumeMm3: number;
+  containerBreakdown: { containerIndex: number; count: number }[];
+}
+
+export function buildCompactReportRows(
+  project: Project,
+  result: OptimizationResult,
+  language: Language = 'en',
+  containerIndexFilter?: number | null
+): CompactReportRow[] {
+  const isSingleContainer =
+    containerIndexFilter !== undefined && containerIndexFilter !== null;
+
+  const placedFiltered = isSingleContainer
+    ? result.placedPackages.filter((p) => p.containerIndex === containerIndexFilter)
+    : result.placedPackages;
+
+  const groupedByPkg = new Map<string, typeof result.placedPackages>();
+  for (const p of placedFiltered) {
+    const arr = groupedByPkg.get(p.packageId) ?? [];
+    arr.push(p);
+    groupedByPkg.set(p.packageId, arr);
+  }
+
+  const totalPlacedByPkg = new Map<string, number>();
+  for (const p of result.placedPackages) {
+    totalPlacedByPkg.set(p.packageId, (totalPlacedByPkg.get(p.packageId) ?? 0) + 1);
+  }
+
+  const rows: CompactReportRow[] = [];
+  const seenIds = new Set<string>();
+
+  for (const spec of project.packages) {
+    seenIds.add(spec.id);
+    const matches = groupedByPkg.get(spec.id) ?? [];
+    const loadedQty = matches.length;
+    if (isSingleContainer && loadedQty === 0) continue;
+
+    const totalLoadedOverall = totalPlacedByPkg.get(spec.id) ?? 0;
+    const unloadedQty = isSingleContainer
+      ? 0
+      : Math.max(0, spec.quantity - totalLoadedOverall);
+
+    const contCounts = new Map<number, number>();
+    let totalVolMm3 = 0;
+    for (const m of matches) {
+      contCounts.set(m.containerIndex, (contCounts.get(m.containerIndex) ?? 0) + 1);
+      totalVolMm3 += m.dx * m.dy * m.dz;
+    }
+
+    const containerBreakdown = Array.from(contCounts.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([containerIndex, count]) => ({ containerIndex, count }));
+
+    rows.push({
+      packageId: spec.id,
+      sku: spec.sku,
+      name: language === 'ar' && spec.nameAr ? spec.nameAr : spec.name,
+      color: spec.color,
+      lengthMm: spec.length,
+      widthMm: spec.width,
+      heightMm: spec.height,
+      unitWeightKg: spec.weight,
+      requestedQty: spec.quantity,
+      loadedQty,
+      unloadedQty,
+      totalWeightKg: spec.weight * loadedQty,
+      totalVolumeMm3: totalVolMm3,
+      containerBreakdown,
+    });
+  }
+
+  // Fallback for any placed packages whose spec was removed from manifest
+  for (const [pkgId, matches] of groupedByPkg.entries()) {
+    if (seenIds.has(pkgId) || matches.length === 0) continue;
+    const sample = matches[0];
+    const contCounts = new Map<number, number>();
+    let totalVolMm3 = 0;
+    let totalWtKg = 0;
+    for (const m of matches) {
+      contCounts.set(m.containerIndex, (contCounts.get(m.containerIndex) ?? 0) + 1);
+      totalVolMm3 += m.dx * m.dy * m.dz;
+      totalWtKg += m.weight;
+    }
+    const containerBreakdown = Array.from(contCounts.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([containerIndex, count]) => ({ containerIndex, count }));
+
+    rows.push({
+      packageId: pkgId,
+      sku: sample.sku,
+      name: resolvePkgName(pkgId, sample.name, project.packages, language),
+      color: sample.color,
+      lengthMm: sample.dx,
+      widthMm: sample.dz,
+      heightMm: sample.dy,
+      unitWeightKg: sample.weight,
+      requestedQty: matches.length,
+      loadedQty: matches.length,
+      unloadedQty: 0,
+      totalWeightKg: totalWtKg,
+      totalVolumeMm3: totalVolMm3,
+      containerBreakdown,
+    });
+  }
+
+  return rows;
+}
+
+export function exportCompactSummaryExcel(
+  project: Project,
+  result: OptimizationResult,
+  lengthUnit: LengthUnit,
+  weightUnit: WeightUnit,
+  language: Language = 'en',
+  containerIndexFilter?: number | null
+): void {
+  const wb = XLSX.utils.book_new();
+  const isAr = language === 'ar';
+  if (isAr) {
+    wb.Workbook = { Views: [{ RTL: true }] };
+  }
+
+  const projName = resolveDisplayProjectName(project, language);
+  const isSingleContainer =
+    containerIndexFilter !== undefined && containerIndexFilter !== null;
+  const rows = buildCompactReportRows(project, result, language, containerIndexFilter);
+
+  const totalLoaded = rows.reduce((s, r) => s + r.loadedQty, 0);
+  const totalReq = rows.reduce((s, r) => s + r.requestedQty, 0);
+  const totalUnloaded = rows.reduce((s, r) => s + r.unloadedQty, 0);
+  const totalWtKg = rows.reduce((s, r) => s + r.totalWeightKg, 0);
+  const totalVolMm3 = rows.reduce((s, r) => s + r.totalVolumeMm3, 0);
+
+  const tableObjects = rows.map((r, idx) => {
+    const dimsStr = formatDims(r.lengthMm, r.widthMm, r.heightMm, lengthUnit);
+    const distStr = r.containerBreakdown
+      .map((cb) => `#${cb.containerIndex + 1} (${cb.count})`)
+      .join(' · ') || '—';
+
+    return isAr
+      ? {
+          '#': idx + 1,
+          'رمز المنتج SKU': r.sku,
+          'اسم الصنف': r.name,
+          'الأبعاد': dimsStr,
+          [`وزن الوحدة (${weightUnit})`]: fromKg(r.unitWeightKg, weightUnit),
+          'الكمية المطلوبة': r.requestedQty,
+          'الكمية المحملة': r.loadedQty,
+          ...(isSingleContainer ? {} : { 'غير محمل': r.unloadedQty }),
+          ...(result.containersUsed > 1 && !isSingleContainer
+            ? { 'توزيع الحاويات': distStr }
+            : {}),
+          [`إجمالي الوزن (${weightUnit})`]: fromKg(r.totalWeightKg, weightUnit),
+          'إجمالي الحجم': formatVolume(r.totalVolumeMm3, lengthUnit),
+        }
+      : {
+          '#': idx + 1,
+          SKU: r.sku,
+          Product: r.name,
+          Dimensions: dimsStr,
+          [`Unit Weight (${weightUnit})`]: fromKg(r.unitWeightKg, weightUnit),
+          Requested: r.requestedQty,
+          'Loaded Qty': r.loadedQty,
+          ...(isSingleContainer ? {} : { Unloaded: r.unloadedQty }),
+          ...(result.containersUsed > 1 && !isSingleContainer
+            ? { Containers: distStr }
+            : {}),
+          [`Total Weight (${weightUnit})`]: fromKg(r.totalWeightKg, weightUnit),
+          'Total Volume': formatVolume(r.totalVolumeMm3, lengthUnit),
+        };
+  });
+
+  tableObjects.push(
+    isAr
+      ? {
+          '#': '' as unknown as number,
+          'رمز المنتج SKU': '—',
+          'اسم الصنف': 'الإجمالي الكلي',
+          'الأبعاد': '—',
+          [`وزن الوحدة (${weightUnit})`]: '' as unknown as number,
+          'الكمية المطلوبة': totalReq,
+          'الكمية المحملة': totalLoaded,
+          ...(isSingleContainer ? {} : { 'غير محمل': totalUnloaded }),
+          ...(result.containersUsed > 1 && !isSingleContainer
+            ? { 'توزيع الحاويات': `${result.containersUsed} حاوية` }
+            : {}),
+          [`إجمالي الوزن (${weightUnit})`]: fromKg(totalWtKg, weightUnit),
+          'إجمالي الحجم': formatVolume(totalVolMm3, lengthUnit),
+        }
+      : {
+          '#': '' as unknown as number,
+          SKU: '—',
+          Product: 'Grand Total',
+          Dimensions: '—',
+          [`Unit Weight (${weightUnit})`]: '' as unknown as number,
+          Requested: totalReq,
+          'Loaded Qty': totalLoaded,
+          ...(isSingleContainer ? {} : { Unloaded: totalUnloaded }),
+          ...(result.containersUsed > 1 && !isSingleContainer
+            ? { Containers: `${result.containersUsed} unit(s)` }
+            : {}),
+          [`Total Weight (${weightUnit})`]: fromKg(totalWtKg, weightUnit),
+          'Total Volume': formatVolume(totalVolMm3, lengthUnit),
+        }
+  );
+
+  const wsMain = XLSX.utils.json_to_sheet(tableObjects);
+  XLSX.utils.book_append_sheet(
+    wb,
+    wsMain,
+    isAr ? 'التقرير المختصر' : 'Compact Summary'
+  );
+
+  // If multi-container and showing All Containers, add a per-container compact sheet
+  if (!isSingleContainer && result.containersUsed > 1) {
+    const perContRows: Record<string, unknown>[] = [];
+    for (let cIdx = 0; cIdx < result.containersUsed; cIdx++) {
+      const sp =
+        result.containerSummaries[cIdx]?.space ??
+        project.spaces?.[cIdx] ??
+        project.space;
+      const spName = isAr && sp.nameAr ? sp.nameAr : sp.name;
+      const cRows = buildCompactReportRows(project, result, language, cIdx);
+      cRows.forEach((cr) => {
+        perContRows.push(
+          isAr
+            ? {
+                الحاوية: `#${cIdx + 1} · ${spName}`,
+                'رمز المنتج SKU': cr.sku,
+                'اسم الصنف': cr.name,
+                'الكمية المحملة': cr.loadedQty,
+                [`إجمالي الوزن (${weightUnit})`]: fromKg(cr.totalWeightKg, weightUnit),
+                'إجمالي الحجم': formatVolume(cr.totalVolumeMm3, lengthUnit),
+              }
+            : {
+                Container: `#${cIdx + 1} · ${spName}`,
+                SKU: cr.sku,
+                Product: cr.name,
+                'Loaded Qty': cr.loadedQty,
+                [`Total Weight (${weightUnit})`]: fromKg(cr.totalWeightKg, weightUnit),
+                'Total Volume': formatVolume(cr.totalVolumeMm3, lengthUnit),
+              }
+        );
+      });
+    }
+    if (perContRows.length > 0) {
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(perContRows),
+        isAr ? 'ملخص كل حاوية' : 'Per Container'
+      );
+    }
+  }
+
+  XLSX.writeFile(wb, `PackVolPro_Compact_${safeFilePart(projName)}.xlsx`);
+}
+
+export function exportCompactSummaryCsv(
+  project: Project,
+  result: OptimizationResult,
+  lengthUnit: LengthUnit,
+  weightUnit: WeightUnit,
+  language: Language = 'en',
+  containerIndexFilter?: number | null
+): void {
+  const isAr = language === 'ar';
+  const projName = resolveDisplayProjectName(project, language);
+  const rows = buildCompactReportRows(project, result, language, containerIndexFilter);
+
+  const headers = isAr
+    ? [
+        'SKU',
+        'اسم_الصنف',
+        'الأبعاد',
+        `وزن_الوحدة_${weightUnit}`,
+        'المطلوب',
+        'الكمية_المحملة',
+        'غير_محمل',
+        'الحاويات',
+        `إجمالي_الوزن_${weightUnit}`,
+        'إجمالي_الحجم',
+      ]
+    : [
+        'SKU',
+        'Product',
+        'Dimensions',
+        `UnitWeight_${weightUnit}`,
+        'Requested',
+        'LoadedQty',
+        'Unloaded',
+        'Containers',
+        `TotalWeight_${weightUnit}`,
+        'TotalVolume',
+      ];
+
+  const csvRows = rows.map((r) => {
+    const dist =
+      r.containerBreakdown.map((cb) => `#${cb.containerIndex + 1}(${cb.count})`).join(' ') || '-';
+    return [
+      r.sku,
+      `"${r.name.replace(/"/g, '""')}"`,
+      `"${formatDims(r.lengthMm, r.widthMm, r.heightMm, lengthUnit)}"`,
+      fromKg(r.unitWeightKg, weightUnit),
+      r.requestedQty,
+      r.loadedQty,
+      r.unloadedQty,
+      `"${dist}"`,
+      fromKg(r.totalWeightKg, weightUnit),
+      `"${formatVolume(r.totalVolumeMm3, lengthUnit)}"`,
+    ];
+  });
+
+  const csv = [headers.join(','), ...csvRows.map((r) => r.join(','))].join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `PackVolPro_Compact_${safeFilePart(projName)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function exportCompactSummaryPdf(
+  project: Project,
+  result: OptimizationResult,
+  lengthUnit: LengthUnit,
+  weightUnit: WeightUnit,
+  language: Language = 'en',
+  containerIndexFilter?: number | null
+): Promise<void> {
+  try {
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+  } catch {
+    // ignore font readiness failures
+  }
+
+  const isAr = language === 'ar';
+  const projName = resolveDisplayProjectName(project, language);
+  const isSingleContainer =
+    containerIndexFilter !== undefined && containerIndexFilter !== null;
+  const scopedSpace = isSingleContainer
+    ? result.containerSummaries[containerIndexFilter]?.space ??
+      project.spaces?.[containerIndexFilter] ??
+      project.space
+    : project.space;
+  const spaceLabel =
+    isAr && scopedSpace.nameAr ? scopedSpace.nameAr : scopedSpace.name;
+  const scopeDesc = isSingleContainer
+    ? isAr
+      ? `الحاوية #${containerIndexFilter + 1} (${spaceLabel})`
+      : `Container #${containerIndexFilter + 1} (${spaceLabel})`
+    : isAr
+      ? `جميع الحاويات (${result.containersUsed})`
+      : `All Containers (${result.containersUsed})`;
+
+  const dateStr = new Date().toLocaleString(isAr ? 'ar-EG' : undefined);
+  const rows = buildCompactReportRows(project, result, language, containerIndexFilter);
+
+  const pages: HTMLCanvasElement[] = [];
+  let page = createPdfPageCanvas();
+  let ctx = page.ctx;
+  pages.push(page.canvas);
+
+  const newPage = () => {
+    page = createPdfPageCanvas();
+    ctx = page.ctx;
+    pages.push(page.canvas);
+    return 72;
+  };
+
+  // Top Header Bar (White & Red)
+  ctx.fillStyle = '#dc2626';
+  ctx.fillRect(0, 0, A4_W_PX, 118);
+  ctx.fillStyle = '#991b1b';
+  ctx.fillRect(0, 112, A4_W_PX, 6);
+
+  ctx.textBaseline = 'middle';
+  ctx.direction = isAr ? 'rtl' : 'ltr';
+  ctx.textAlign = isAr ? 'right' : 'left';
+  const titleX = isAr ? A4_W_PX - MARGIN : MARGIN;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `700 30px ${FONT_STACK}`;
+  drawTruncatedText(
+    ctx,
+    isAr ? 'باك فول برو — التقرير المختصر للكميات والأصناف' : 'PackVol Pro — Compact Cargo Summary Report',
+    titleX,
+    44,
+    CONTENT_W
+  );
+
+  ctx.fillStyle = '#fee2e2';
+  ctx.font = `500 18px ${FONT_STACK}`;
+  drawTruncatedText(
+    ctx,
+    isAr
+      ? `المشروع: ${projName}   |   النطاق: ${scopeDesc}   |   ${dateStr}`
+      : `Project: ${projName}   |   Scope: ${scopeDesc}   |   ${dateStr}`,
+    titleX,
+    84,
+    CONTENT_W
+  );
+
+  let y = 148;
+
+  // Compact KPI Summary Strip
+  const totalLoaded = rows.reduce((s, r) => s + r.loadedQty, 0);
+  const totalReq = rows.reduce((s, r) => s + r.requestedQty, 0);
+  const totalWtKg = rows.reduce((s, r) => s + r.totalWeightKg, 0);
+  const totalVolMm3 = rows.reduce((s, r) => s + r.totalVolumeMm3, 0);
+
+  const kpiCards = isAr
+    ? [
+        { label: 'إجمالي الحجم المحمل', val: formatVolume(totalVolMm3, lengthUnit) },
+        { label: 'إجمالي الوزن المحمل', val: formatWeight(totalWtKg, weightUnit) },
+        { label: 'العبوات المحملة', val: isSingleContainer ? `${totalLoaded}` : `${totalLoaded} / ${totalReq}` },
+        { label: 'عدد الأصناف المميزة', val: `${rows.length}` },
+      ]
+    : [
+        { label: 'Distinct SKUs', val: `${rows.length}` },
+        { label: 'Loaded Units', val: isSingleContainer ? `${totalLoaded}` : `${totalLoaded} / ${totalReq}` },
+        { label: 'Total Cargo Weight', val: formatWeight(totalWtKg, weightUnit) },
+        { label: 'Loaded Volume', val: formatVolume(totalVolMm3, lengthUnit) },
+      ];
+
+  const cardGap = 16;
+  const cardW = (CONTENT_W - cardGap * 3) / 4;
+  kpiCards.forEach((card, i) => {
+    const cx = MARGIN + i * (cardW + cardGap);
+    ctx.fillStyle = '#fef2f2';
+    ctx.fillRect(cx, y, cardW, 74);
+    ctx.strokeStyle = '#fecaca';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx, y, cardW, 74);
+
+    ctx.direction = isAr ? 'rtl' : 'ltr';
+    ctx.textAlign = isAr ? 'right' : 'left';
+    const textX = isAr ? cx + cardW - 14 : cx + 14;
+    ctx.fillStyle = '#991b1b';
+    ctx.font = `600 14px ${FONT_STACK}`;
+    drawTruncatedText(ctx, card.label, textX, y + 23, cardW - 28);
+
+    ctx.fillStyle = '#18181b';
+    ctx.font = `700 22px ${FONT_STACK}`;
+    drawTruncatedText(ctx, card.val, textX, y + 52, cardW - 28);
+  });
+
+  y += 104;
+
+  // Section Title
+  ctx.direction = isAr ? 'rtl' : 'ltr';
+  ctx.textAlign = isAr ? 'right' : 'left';
+  ctx.fillStyle = '#18181b';
+  ctx.font = `700 22px ${FONT_STACK}`;
+  ctx.fillText(
+    isAr ? 'جدول الكميات المجمعة لكل صنف (سطر واحد لكل بند)' : 'Aggregated Item Quantities (One Line Per SKU)',
+    isAr ? A4_W_PX - MARGIN : MARGIN,
+    y
+  );
+  ctx.fillStyle = '#dc2626';
+  ctx.fillRect(isAr ? A4_W_PX - MARGIN - 90 : MARGIN, y + 16, 90, 4);
+  y += 40;
+
+  const cols = isAr
+    ? [
+        { label: 'إجمالي الحجم', w: 0.12, ltr: false },
+        { label: `إجمالي الوزن (${weightUnit})`, w: 0.12, ltr: true },
+        { label: isSingleContainer ? 'الحاوية' : 'التوزيع بالوحدات', w: 0.18, ltr: true },
+        { label: isSingleContainer ? 'المطلوب' : 'مطلوب / متبقي', w: 0.1, ltr: true },
+        { label: 'الكمية المحملة', w: 0.09, ltr: true },
+        { label: `الأبعاد (${lengthUnit})`, w: 0.13, ltr: true },
+        { label: 'اسم الصنف', w: 0.18, ltr: false },
+        { label: 'SKU', w: 0.08, ltr: true },
+      ]
+    : [
+        { label: 'SKU', w: 0.08, ltr: true },
+        { label: 'Product Name', w: 0.18, ltr: false },
+        { label: `Dimensions (${lengthUnit})`, w: 0.13, ltr: true },
+        { label: 'Loaded Qty', w: 0.09, ltr: true },
+        { label: isSingleContainer ? 'Proj. Req' : 'Req / Unl.', w: 0.1, ltr: true },
+        { label: 'Containers', w: 0.18, ltr: true },
+        { label: `Total Wt (${weightUnit})`, w: 0.12, ltr: true },
+        { label: 'Total Vol', w: 0.12, ltr: false },
+      ];
+
+  const lineH = 19;
+
+  const drawWrappedCellLines = (
+    lines: string[],
+    cx: number,
+    cy: number,
+    w: number,
+    rh: number,
+    useLtr: boolean
+  ) => {
+    const totalH = lines.length * lineH;
+    const startY = cy + (rh - totalH) / 2 + lineH / 2;
+    ctx.direction = useLtr ? 'ltr' : isAr ? 'rtl' : 'ltr';
+    ctx.textAlign = isAr ? 'right' : 'left';
+    const textX = isAr ? cx + w - 8 : cx + 8;
+    lines.forEach((ln, lIdx) => {
+      ctx.fillText(ln, textX, startY + lIdx * lineH);
+    });
+  };
+
+  const drawHeader = (atY: number) => {
+    ctx.font = `700 13px ${FONT_STACK}`;
+    const wrappedHeaders = cols.map((c) => wrapCanvasLines(ctx, c.label, c.w * CONTENT_W - 16));
+    const maxLines = wrappedHeaders.reduce((m, ls) => Math.max(m, ls.length), 1);
+    const rh = Math.max(42, maxLines * lineH + 14);
+
+    let cx = MARGIN;
+    cols.forEach((c, cIdx) => {
+      const w = c.w * CONTENT_W;
+      ctx.fillStyle = '#18181b';
+      ctx.fillRect(cx, atY, w, rh);
+      ctx.strokeStyle = '#3f3f46';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx, atY, w, rh);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `700 13px ${FONT_STACK}`;
+      drawWrappedCellLines(wrappedHeaders[cIdx], cx, atY, w, rh, false);
+      cx += w;
+    });
+    return atY + rh;
+  };
+
+  y = drawHeader(y);
+
+  rows.forEach((r, idx) => {
+    const dimsStr = `${fromMm(r.lengthMm, lengthUnit)}×${fromMm(r.widthMm, lengthUnit)}×${fromMm(r.heightMm, lengthUnit)}`;
+    const distStr = isSingleContainer
+      ? `#${containerIndexFilter + 1}`
+      : r.containerBreakdown.map((cb) => `#${cb.containerIndex + 1}\u00a0(${cb.count})`).join(' · ') || '—';
+    const reqUnlStr = isSingleContainer
+      ? `${r.requestedQty}`
+      : `${r.requestedQty}\u00a0/\u00a0${r.unloadedQty}`;
+    const wtStr = String(fromKg(r.totalWeightKg, weightUnit));
+    const volStr = formatVolume(r.totalVolumeMm3, lengthUnit);
+
+    const vals = isAr
+      ? [volStr, wtStr, distStr, reqUnlStr, String(r.loadedQty), dimsStr, r.name, r.sku]
+      : [r.sku, r.name, dimsStr, String(r.loadedQty), reqUnlStr, distStr, wtStr, volStr];
+
+    const wrappedCells = vals.map((v, cIdx) => {
+      const isLoadedCol = isAr ? cIdx === 4 : cIdx === 3;
+      const isNameCol = isAr ? cIdx === 6 : cIdx === 1;
+      ctx.font = `${isLoadedCol ? '700' : '500'} 13px ${isNameCol ? FONT_STACK : MONO_STACK}`;
+      return wrapCanvasLines(ctx, v, cols[cIdx].w * CONTENT_W - 16);
+    });
+
+    const maxCellLines = wrappedCells.reduce((m, ls) => Math.max(m, ls.length), 1);
+    const rh = Math.max(38, maxCellLines * lineH + 14);
+
+    if (y + rh + 54 > A4_H_PX - 70) {
+      y = newPage();
+      y = drawHeader(y);
+    }
+
+    let cx = MARGIN;
+    wrappedCells.forEach((cellLines, cIdx) => {
+      const w = cols[cIdx].w * CONTENT_W;
+      const isLoadedCol = isAr ? cIdx === 4 : cIdx === 3;
+      const isNameCol = isAr ? cIdx === 6 : cIdx === 1;
+      ctx.fillStyle = isLoadedCol ? '#fef2f2' : idx % 2 === 0 ? '#ffffff' : '#fafafa';
+      ctx.fillRect(cx, y, w, rh);
+      ctx.strokeStyle = '#e4e4e7';
+      ctx.strokeRect(cx, y, w, rh);
+
+      ctx.fillStyle = isLoadedCol ? '#b91c1c' : '#18181b';
+      ctx.font = `${isLoadedCol ? '700' : '500'} 13px ${isNameCol ? FONT_STACK : MONO_STACK}`;
+      drawWrappedCellLines(cellLines, cx, y, w, rh, cols[cIdx].ltr);
+      cx += w;
+    });
+    y += rh;
+  });
+
+  // Grand Totals Footer Row
+  const totVals = isAr
+    ? [
+        formatVolume(totalVolMm3, lengthUnit),
+        String(fromKg(totalWtKg, weightUnit)),
+        isSingleContainer ? `#${containerIndexFilter + 1}` : `${result.containersUsed} وحدة`,
+        `${totalReq}`,
+        `${totalLoaded}`,
+        '—',
+        'الإجمالي الكلي',
+        `${rows.length}`,
+      ]
+    : [
+        `${rows.length}`,
+        'Grand Total',
+        '—',
+        `${totalLoaded}`,
+        `${totalReq}`,
+        isSingleContainer ? `#${containerIndexFilter + 1}` : `${result.containersUsed}`,
+        String(fromKg(totalWtKg, weightUnit)),
+        formatVolume(totalVolMm3, lengthUnit),
+      ];
+
+  ctx.font = `700 13.5px ${FONT_STACK}`;
+  const wrappedTotals = totVals.map((v, cIdx) =>
+    wrapCanvasLines(ctx, v, cols[cIdx].w * CONTENT_W - 16)
+  );
+  const totRh = Math.max(42, wrappedTotals.reduce((m, ls) => Math.max(m, ls.length), 1) * lineH + 14);
+
+  if (y + totRh > A4_H_PX - 70) {
+    y = newPage();
+  }
+
+  let cx = MARGIN;
+  wrappedTotals.forEach((cellLines, cIdx) => {
+    const w = cols[cIdx].w * CONTENT_W;
+    ctx.fillStyle = '#fee2e2';
+    ctx.fillRect(cx, y, w, totRh);
+    ctx.strokeStyle = '#fca5a5';
+    ctx.strokeRect(cx, y, w, totRh);
+    ctx.fillStyle = '#991b1b';
+    ctx.font = `700 13.5px ${FONT_STACK}`;
+    drawWrappedCellLines(cellLines, cx, y, w, totRh, false);
+    cx += w;
+  });
+
+  // Stamp clean footers
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  pages.forEach((pgCanvas, idx) => {
+    const pgCtx = pgCanvas.getContext('2d')!;
+    pgCtx.direction = isAr ? 'rtl' : 'ltr';
+    pgCtx.textAlign = 'center';
+    pgCtx.fillStyle = '#71717a';
+    pgCtx.font = `500 13px ${FONT_STACK}`;
+    pgCtx.fillText(
+      isAr
+        ? `باك فول برو · التقرير المختصر · صفحة ${idx + 1} من ${pages.length}`
+        : `PackVol Pro · Compact Report · Page ${idx + 1} of ${pages.length}`,
+      A4_W_PX / 2,
+      A4_H_PX - 30
+    );
+
+    if (idx > 0) doc.addPage();
+    doc.addImage(pgCanvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297, undefined, 'FAST');
+  });
+
+  doc.save(`PackVolPro_Compact_Report_${safeFilePart(projName)}.pdf`);
 }
 
 export function exportProjectBackupJson(project: Project): void {

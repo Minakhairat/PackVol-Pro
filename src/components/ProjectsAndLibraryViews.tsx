@@ -28,6 +28,7 @@ import { formatDims, formatVolume, formatWeight } from '../utils/units';
 import { t, translateTestName } from '../i18n/translations';
 import { PackageFormModal } from './PackageFormModal';
 import { Views2D } from './Views2D';
+import { CompactReportPanel } from './CompactReportPanel';
 import {
   downloadProductsExcelTemplate,
   exportProjectBackupJson,
@@ -966,6 +967,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           })}
         </div>
       )}
+
+      <CompactReportPanel
+        project={project}
+        result={result}
+        lengthUnit={lengthUnit}
+        weightUnit={weightUnit}
+        language={language}
+        activeContainerIdx={safeIdx}
+      />
 
       <Views2D
         space={activeSpace}
