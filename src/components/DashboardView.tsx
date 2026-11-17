@@ -91,45 +91,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       category: 'container',
       title: t(language, 'containerOpt'),
       desc: t(language, 'containerDesc'),
-      icon: <Container className="w-5 h-5 text-orange-600" />,
+      icon: <Container className="w-5 h-5 text-red-600" />,
     },
     {
       category: 'truck',
       title: t(language, 'truckOpt'),
       desc: t(language, 'truckDesc'),
-      icon: <Truck className="w-5 h-5 text-orange-600" />,
+      icon: <Truck className="w-5 h-5 text-red-600" />,
     },
     {
       category: 'pallet',
       title: t(language, 'palletOpt'),
       desc: t(language, 'palletDesc'),
-      icon: <Layers className="w-5 h-5 text-orange-600" />,
+      icon: <Layers className="w-5 h-5 text-red-600" />,
     },
     {
       category: 'railway',
       title: t(language, 'railOpt'),
       desc: t(language, 'railDesc'),
-      icon: <TrainFront className="w-5 h-5 text-orange-600" />,
+      icon: <TrainFront className="w-5 h-5 text-red-600" />,
     },
     {
       category: 'custom',
       title: t(language, 'customSpace'),
       desc: t(language, 'customDesc'),
-      icon: <Box className="w-5 h-5 text-orange-600" />,
+      icon: <Box className="w-5 h-5 text-red-600" />,
     },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-zinc-900 text-white rounded-xl p-6 border border-zinc-800">
-        <div className="space-y-1 max-w-2xl">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
+      {/* Header Banner (White & Red) */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white text-zinc-900 rounded-xl p-6 border-2 border-red-100 shadow-sm">
+        <div className="space-y-1 max-w-2xl border-s-4 border-red-600 ps-4">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">
             {language === 'ar'
               ? 'مركز تحسين الأحمال والمساحات ثلاثي الأبعاد'
               : '3D Cargo & Load Space Optimization Control'}
           </h1>
-          <p className="text-sm text-zinc-300">
+          <p className="text-sm text-zinc-600">
             {language === 'ar'
               ? 'حسابات فيزيائية دقيقة، كشف التصادمات، وتصور ثلاثي الأبعاد بدون اتصال بالإنترنت.'
               : 'Calculate collision-free 3D arrangements, enforce stacking & weight limits, and export actionable warehouse loading plans.'}
@@ -137,7 +137,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
         <button
           onClick={() => onStartTemplate('container')}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-orange-600 px-5 py-3 text-sm font-semibold text-white hover:bg-orange-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-5 py-3 text-sm font-semibold text-white hover:bg-red-700 transition-colors whitespace-nowrap shrink-0 shadow-sm cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           <span>{t(language, 'newProject')}</span>
@@ -168,7 +168,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         <div className="rounded-lg border border-zinc-200 bg-white p-4">
           <div className="text-xs font-medium text-zinc-500">{t(language, 'avgUtilization')}</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-orange-600">
+          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-red-600">
             {avgUtilization.toFixed(1)}%
           </div>
           <div className="mt-1 text-[11px] text-zinc-500">
@@ -229,13 +229,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               key={card.category}
               onClick={() => onStartTemplate(card.category)}
-              className="group text-start rounded-lg border border-zinc-200 bg-white p-4 hover:border-orange-500 hover:shadow-sm transition-all cursor-pointer flex flex-col justify-between gap-3"
+              className="group text-start rounded-lg border border-zinc-200 bg-white p-4 hover:border-red-500 hover:shadow-sm transition-all cursor-pointer flex flex-col justify-between gap-3"
             >
               <div className="flex items-center justify-between">
-                <div className="p-2 rounded-md bg-orange-50 border border-orange-100">
+                <div className="p-2 rounded-md bg-red-50 border border-red-100">
                   {card.icon}
                 </div>
-                <ArrowRight className="w-4 h-4 text-zinc-400 group-hover:text-orange-600 transition-colors rtl:rotate-180" />
+                <ArrowRight className="w-4 h-4 text-zinc-400 group-hover:text-red-600 transition-colors rtl:rotate-180" />
               </div>
               <div>
                 <div className="text-sm font-semibold text-zinc-900">{card.title}</div>
@@ -250,12 +250,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <section className="rounded-lg border border-zinc-200 bg-white overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
           <div className="flex items-center gap-2">
-            <Boxes className="w-4 h-4 text-zinc-600" />
+            <Boxes className="w-4 h-4 text-red-600" />
             <h2 className="text-sm font-semibold text-zinc-900">{t(language, 'recentProjects')}</h2>
           </div>
           <button
             onClick={onNavigateProjects}
-            className="text-xs font-medium text-orange-600 hover:text-orange-700 cursor-pointer"
+            className="text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer"
           >
             {language === 'ar' ? 'عرض الكل' : 'View All Projects'}
           </button>
@@ -270,6 +270,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               const projName = language === 'ar' && proj.nameAr ? proj.nameAr : proj.name;
               const spaceName =
                 language === 'ar' && proj.space.nameAr ? proj.space.nameAr : proj.space.name;
+              const fleetLen = proj.spaces?.length ?? 1;
               return (
                 <div
                   key={proj.id}
@@ -279,13 +280,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => onOpenProject(proj.id)}
-                        className="text-sm font-semibold text-zinc-900 hover:text-orange-600 truncate cursor-pointer text-start"
+                        className="text-sm font-semibold text-zinc-900 hover:text-red-600 truncate cursor-pointer text-start"
                       >
                         {projName}
                       </button>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500 font-mono tabular-nums">
-                      <span>{spaceName}</span>
+                      <span>
+                        {spaceName}
+                        {fleetLen > 1 ? ` (×${fleetLen})` : ''}
+                      </span>
                       <span aria-hidden="true">·</span>
                       <span>
                         {formatDims(
@@ -302,7 +306,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {proj.lastResult && (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span className="text-orange-600 font-semibold">
+                          <span className="text-red-600 font-semibold">
                             {proj.lastResult.volumeUtilizationPct}% {t(language, 'volShort')}
                           </span>
                         </>
@@ -313,7 +317,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => onOpenProject(proj.id)}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
                       <span>{t(language, 'openWorkspace')}</span>

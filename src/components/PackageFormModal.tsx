@@ -14,11 +14,11 @@ interface PackageFormModalProps {
 }
 
 const COLOR_SWATCHES = [
-  '#ea580c',
+  '#dc2626',
   '#2563eb',
   '#d97706',
   '#0d9488',
-  '#dc2626',
+  '#ea580c',
   '#475569',
   '#059669',
   '#7c3aed',
@@ -119,15 +119,15 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
       <div className="w-full max-w-2xl rounded-xl bg-white border border-zinc-200 shadow-2xl overflow-hidden my-auto">
-        <div className="flex items-center justify-between px-5 py-3.5 bg-zinc-900 text-white">
+        <div className="flex items-center justify-between px-5 py-3.5 bg-red-600 text-white">
           <h3 className="text-sm font-semibold">
             {initial ? `${t(language, 'edit')} · ${initial.sku}` : t(language, 'addPackage')}
           </h3>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+            className="p-1.5 rounded-md text-red-100 hover:text-white hover:bg-red-700 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -150,7 +150,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={language === 'ar' ? 'مثال: صندوق صمام تصدير' : 'e.g. Export Valve Crate'}
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -161,7 +161,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 type="text"
                 value={sku}
                 onChange={(e) => setSku(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono focus:outline-none focus:border-red-600"
               />
             </div>
           </div>
@@ -177,7 +177,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 min="0.01"
                 value={lengthVal}
                 onChange={(e) => setLengthVal(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -190,7 +190,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 min="0.01"
                 value={widthVal}
                 onChange={(e) => setWidthVal(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -203,7 +203,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 min="0.01"
                 value={heightVal}
                 onChange={(e) => setHeightVal(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -216,7 +216,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 min="0.01"
                 value={weightVal}
                 onChange={(e) => setWeightVal(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -229,7 +229,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 step="1"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-2.5 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-red-600"
               />
             </div>
           </div>
@@ -243,7 +243,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 type="text"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -256,7 +256,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 max="10"
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-orange-500"
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono tabular-nums focus:outline-none focus:border-red-600"
               />
             </div>
             <div>
@@ -292,7 +292,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 type="checkbox"
                 checked={stackable}
                 onChange={(e) => setStackable(e.target.checked)}
-                className="accent-orange-600 w-4 h-4"
+                className="accent-red-600 w-4 h-4"
               />
               <span>{t(language, 'stackable')}</span>
             </label>
@@ -301,7 +301,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 type="checkbox"
                 checked={rotatable}
                 onChange={(e) => setRotatable(e.target.checked)}
-                className="accent-orange-600 w-4 h-4"
+                className="accent-red-600 w-4 h-4"
               />
               <span>{t(language, 'rotatable')}</span>
             </label>
@@ -310,7 +310,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 type="checkbox"
                 checked={fragile}
                 onChange={(e) => setFragile(e.target.checked)}
-                className="accent-orange-600 w-4 h-4"
+                className="accent-red-600 w-4 h-4"
               />
               <span>{t(language, 'fragile')}</span>
             </label>
@@ -319,7 +319,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                 type="checkbox"
                 checked={thisSideUp}
                 onChange={(e) => setThisSideUp(e.target.checked)}
-                className="accent-orange-600 w-4 h-4"
+                className="accent-red-600 w-4 h-4"
               />
               <span>{t(language, 'thisSideUp')}</span>
             </label>
@@ -365,7 +365,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                     disabled={!rotatable || thisSideUp}
                     checked={!thisSideUp && allowX}
                     onChange={(e) => setAllowX(e.target.checked)}
-                    className="accent-orange-600"
+                    className="accent-red-600"
                   />
                   X
                 </label>
@@ -375,7 +375,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                     disabled={!rotatable}
                     checked={allowY}
                     onChange={(e) => setAllowY(e.target.checked)}
-                    className="accent-orange-600"
+                    className="accent-red-600"
                   />
                   Y
                 </label>
@@ -385,7 +385,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
                     disabled={!rotatable || thisSideUp}
                     checked={!thisSideUp && allowZ}
                     onChange={(e) => setAllowZ(e.target.checked)}
-                    className="accent-orange-600"
+                    className="accent-red-600"
                   />
                   Z
                 </label>
@@ -403,7 +403,7 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
             </button>
             <button
               type="submit"
-              className="rounded-lg bg-orange-600 px-5 py-2 text-xs font-semibold text-white hover:bg-orange-500 cursor-pointer"
+              className="rounded-lg bg-red-600 px-5 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
             >
               {t(language, 'save')}
             </button>

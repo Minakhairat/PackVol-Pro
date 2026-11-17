@@ -171,6 +171,7 @@ export default function App() {
       description: `Created from ${tpl.name}`,
       descriptionAr: `تم الإنشاء من قالب ${tpl.nameAr ?? tpl.name}`,
       space: { ...tpl },
+      spaces: [{ ...tpl }],
       packages: library.slice(0, 2).map((p, i) => ({
         ...p,
         id: `pkg-${Date.now()}-${i}`,
@@ -267,9 +268,9 @@ export default function App() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-100 text-zinc-800">
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 text-zinc-800">
         <div className="text-center space-y-2">
-          <div className="text-lg font-bold tracking-tight">{t(settings.language, 'appName')}</div>
+          <div className="text-lg font-bold tracking-tight text-red-600">{t(settings.language, 'appName')}</div>
           <div className="text-xs text-zinc-500">{t(settings.language, 'loadingApp')}</div>
         </div>
       </div>
@@ -277,13 +278,18 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-zinc-100 text-zinc-900">
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex md:w-60 lg:w-64 md:flex-col md:fixed md:inset-y-0 bg-zinc-900 text-zinc-100 border-e border-zinc-800 z-30 no-print">
-        <div className="h-14 px-5 flex items-center justify-between border-b border-zinc-800">
-          <span className="text-base font-bold tracking-tight text-white whitespace-nowrap">
-            {t(settings.language, 'appName')}
-          </span>
+    <div className="min-h-screen flex flex-col md:flex-row bg-zinc-50 text-zinc-900">
+      {/* Desktop Sidebar (White & Red) */}
+      <aside className="hidden md:flex md:w-60 lg:w-64 md:flex-col md:fixed md:inset-y-0 bg-white text-zinc-900 border-e border-zinc-200 z-30 no-print">
+        <div className="h-14 px-5 flex items-center justify-between border-b border-zinc-200">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-red-600 text-white">
+              <Box className="w-4 h-4" />
+            </span>
+            <span className="text-base font-bold tracking-tight text-zinc-900 whitespace-nowrap">
+              {t(settings.language, 'appName')}
+            </span>
+          </div>
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -295,8 +301,8 @@ export default function App() {
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                   active
-                    ? 'bg-orange-600 text-white font-semibold'
-                    : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                    ? 'bg-red-600 text-white font-semibold shadow-sm'
+                    : 'text-zinc-600 hover:bg-red-50 hover:text-red-700'
                 }`}
               >
                 {item.icon}
@@ -307,7 +313,7 @@ export default function App() {
         </nav>
 
         {/* Sidebar Bottom Controls: Unit Switcher, Language Switcher, PWA Install */}
-        <div className="p-3 border-t border-zinc-800 space-y-2.5">
+        <div className="p-3 border-t border-zinc-200 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <select
               aria-label="Measurement Unit"
@@ -315,7 +321,7 @@ export default function App() {
               onChange={(e) =>
                 updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
               }
-              className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-xs font-mono text-zinc-100"
+              className="flex-1 rounded-md bg-zinc-50 border border-zinc-300 px-2 py-1.5 text-xs font-mono text-zinc-800 focus:outline-none focus:border-red-600"
             >
               <option value="mm">mm</option>
               <option value="cm">cm</option>
@@ -330,9 +336,9 @@ export default function App() {
                   language: settings.language === 'en' ? 'ar' : 'en',
                 })
               }
-              className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-md bg-zinc-50 border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-red-50 hover:border-red-200 hover:text-red-700 cursor-pointer"
             >
-              <Globe className="w-3.5 h-3.5" />
+              <Globe className="w-3.5 h-3.5 text-red-600" />
               <span>{settings.language === 'en' ? 'AR' : 'EN'}</span>
             </button>
           </div>
@@ -342,17 +348,22 @@ export default function App() {
       </aside>
 
       {/* Mobile Compact Header (<56px) */}
-      <header className="md:hidden sticky top-0 z-30 h-13 bg-zinc-900 text-white px-4 flex items-center justify-between border-b border-zinc-800 no-print">
-        <span className="text-sm font-bold tracking-tight whitespace-nowrap">
-          {t(settings.language, 'appName')}
-        </span>
+      <header className="md:hidden sticky top-0 z-30 h-13 bg-white text-zinc-900 px-4 flex items-center justify-between border-b border-zinc-200 no-print">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-red-600 text-white">
+            <Box className="w-3.5 h-3.5" />
+          </span>
+          <span className="text-sm font-bold tracking-tight whitespace-nowrap">
+            {t(settings.language, 'appName')}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <select
             value={settings.lengthUnit}
             onChange={(e) =>
               updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
             }
-            className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs font-mono text-white"
+            className="rounded bg-zinc-50 border border-zinc-300 px-2 py-1 text-xs font-mono text-zinc-800"
           >
             <option value="mm">mm</option>
             <option value="cm">cm</option>
@@ -366,7 +377,7 @@ export default function App() {
                 language: settings.language === 'en' ? 'ar' : 'en',
               })
             }
-            className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs font-medium text-white"
+            className="rounded bg-zinc-50 border border-zinc-300 px-2 py-1 text-xs font-semibold text-red-600"
           >
             {settings.language === 'en' ? 'AR' : 'EN'}
           </button>
@@ -465,7 +476,7 @@ export default function App() {
       </main>
 
       {/* Mobile Bottom Navigation Bar (5 thumb-friendly tabs, <= 56px) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-zinc-900 text-zinc-300 border-t border-zinc-800 grid grid-cols-5 items-center no-print">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white text-zinc-500 border-t border-zinc-200 grid grid-cols-5 items-center no-print shadow-sm">
         {(
           [
             { id: 'dashboard', label: t(settings.language, 'dashboard'), icon: <LayoutDashboard className="w-4 h-4" /> },
@@ -481,7 +492,7 @@ export default function App() {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               className={`flex flex-col items-center justify-center h-full px-1 ${
-                active ? 'text-orange-500 font-semibold' : 'text-zinc-400'
+                active ? 'text-red-600 font-semibold' : 'text-zinc-500'
               }`}
             >
               {item.icon}

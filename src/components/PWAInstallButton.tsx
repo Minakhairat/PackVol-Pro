@@ -14,7 +14,7 @@ export const PWAInstallButton: React.FC<{ language: Language }> = ({ language })
     return (
       <button
         onClick={install}
-        className="inline-flex items-center gap-1.5 rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
       >
         <Download className="w-3.5 h-3.5" />
         <span>{t(language, 'installApp')}</span>
@@ -27,7 +27,7 @@ export const PWAInstallButton: React.FC<{ language: Language }> = ({ language })
       <>
         <button
           onClick={() => setShowIOSGuide(true)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           <Download className="w-3.5 h-3.5" />
           <span>{t(language, 'installApp')}</span>
@@ -54,7 +54,7 @@ export const PWAInstallButton: React.FC<{ language: Language }> = ({ language })
               </p>
               <button
                 onClick={() => setShowIOSGuide(false)}
-                className="mt-4 w-full rounded-lg bg-zinc-900 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800 cursor-pointer"
+                className="mt-4 w-full rounded-lg bg-red-600 py-2.5 text-sm font-semibold text-white hover:bg-red-700 cursor-pointer"
               >
                 {t(language, 'close')}
               </button>

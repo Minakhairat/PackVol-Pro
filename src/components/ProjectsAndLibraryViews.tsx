@@ -67,11 +67,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [renameText, setRenameText] = useState('');
   const backupInputRef = useRef<HTMLInputElement>(null);
 
-  const filtered = projects.filter(
-    (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.space.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = projects.filter((p) => {
+    const q = search.toLowerCase();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.nameAr && p.nameAr.toLowerCase().includes(q)) ||
+      p.space.name.toLowerCase().includes(q) ||
+      (p.space.nameAr && p.space.nameAr.toLowerCase().includes(q))
+    );
+  });
 
   const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -106,7 +110,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t(language, 'searchPlaceholder')}
-              className="pl-8 pr-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-orange-500"
+              className="pl-8 pr-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
             />
           </div>
           <button
@@ -125,7 +129,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           />
           <button
             onClick={onCreateNew}
-            className="inline-flex items-center gap-1.5 rounded-md bg-orange-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t(language, 'newProject')}</span>
@@ -137,6 +141,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         {filtered.map((proj) => {
           const pkgTotal = proj.packages.reduce((s, p) => s + p.quantity, 0);
           const weightTotal = proj.packages.reduce((s, p) => s + p.weight * p.quantity, 0);
+          const fleetLen = proj.spaces?.length ?? 1;
           const projName = language === 'ar' && proj.nameAr ? proj.nameAr : proj.name;
           const spaceName =
             language === 'ar' && proj.space.nameAr ? proj.space.nameAr : proj.space.name;
@@ -144,7 +149,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           return (
             <div
               key={proj.id}
-              className="rounded-xl border border-zinc-200 bg-white p-4 flex flex-col justify-between gap-4"
+              className="rounded-xl border border-zinc-200 bg-white p-4 flex flex-col justify-between gap-4 hover:border-red-200 transition-colors"
             >
               <div className="space-y-2">
                 {renamingId === proj.id ? (
@@ -153,14 +158,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       type="text"
                       value={renameText}
                       onChange={(e) => setRenameText(e.target.value)}
-                      className="flex-1 rounded border border-orange-500 px-2 py-1 text-sm font-semibold"
+                      className="flex-1 rounded border border-red-600 px-2 py-1 text-sm font-semibold focus:outline-none"
                     />
                     <button
                       onClick={() => {
                         if (renameText.trim()) onRenameProject(proj.id, renameText.trim());
                         setRenamingId(null);
                       }}
-                      className="px-2.5 py-1 rounded bg-zinc-900 text-white text-xs cursor-pointer"
+                      className="px-2.5 py-1 rounded bg-red-600 text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
                     >
                       {t(language, 'save')}
                     </button>
@@ -182,7 +187,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 )}
 
                 <div className="text-xs text-zinc-500 space-y-1 font-mono tabular-nums">
-                  <div>{spaceName}</div>
+                  <div>
+                    {spaceName}
+                    {fleetLen > 1 && (
+                      <span className="ms-1.5 text-red-600 font-semibold">(×{fleetLen})</span>
+                    )}
+                  </div>
                   <div>
                     {formatDims(
                       proj.space.internalLength,
@@ -201,7 +211,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               <div className="flex items-center justify-between gap-2 pt-3 border-t border-zinc-100">
                 <button
                   onClick={() => onOpenProject(proj.id)}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
                   <span>{t(language, 'openWorkspace')}</span>
@@ -299,7 +309,7 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t(language, 'searchPlaceholder')}
-              className="pl-8 pr-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-orange-500"
+              className="pl-8 pr-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
             />
           </div>
           <button
@@ -315,7 +325,7 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
               setEditing(null);
               setShowModal(true);
             }}
-            className="inline-flex items-center gap-1.5 rounded-md bg-orange-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t(language, 'addPackage')}</span>
@@ -370,7 +380,7 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
                   <div className="inline-flex items-center gap-1.5">
                     <button
                       onClick={() => onAddToActiveProject(item)}
-                      className="px-2.5 py-1 rounded bg-zinc-900 text-white text-[11px] font-semibold hover:bg-zinc-800 cursor-pointer"
+                      className="px-2.5 py-1 rounded bg-red-600 text-white text-[11px] font-semibold hover:bg-red-700 cursor-pointer"
                     >
                       {t(language, 'addToProjectBtn')}
                     </button>
@@ -491,7 +501,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   <td className="py-2.5 px-3 font-semibold">
                     <button
                       onClick={() => onOpenProject(h.projectId)}
-                      className="text-zinc-900 hover:text-orange-600 cursor-pointer text-start"
+                      className="text-zinc-900 hover:text-red-600 cursor-pointer text-start"
                     >
                       {h.projectName}
                     </button>
@@ -501,7 +511,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   <td className="py-2.5 px-3 text-end font-mono tabular-nums">
                     {h.loadedCount}/{h.totalCount}
                   </td>
-                  <td className="py-2.5 px-3 text-end font-mono tabular-nums text-orange-600 font-semibold">
+                  <td className="py-2.5 px-3 text-end font-mono tabular-nums text-red-600 font-semibold">
                     {h.volumeUtilizationPct}%
                   </td>
                   <td className="py-2.5 px-3 text-end font-mono tabular-nums">
@@ -539,6 +549,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 }) => {
   const { language, lengthUnit, weightUnit } = settings;
   const result = project.lastResult;
+  const [containerIdx, setContainerIdx] = useState(0);
 
   if (!result) {
     return (
@@ -547,13 +558,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <p className="text-sm text-zinc-500 max-w-md mx-auto">{t(language, 'noResultsYet')}</p>
         <button
           onClick={onGoToWorkspace}
-          className="rounded-lg bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 cursor-pointer"
+          className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
         >
           {t(language, 'openWorkspace')}
         </button>
       </div>
     );
   }
+
+  const maxContainerCount = Math.max(1, result.containersUsed);
+  const safeIdx = Math.min(containerIdx, maxContainerCount - 1);
+  const activeSpace =
+    result.containerSummaries[safeIdx]?.space ??
+    project.spaces?.[safeIdx] ??
+    project.space;
+  const activeSpaceName =
+    language === 'ar' && activeSpace.nameAr ? activeSpace.nameAr : activeSpace.name;
 
   return (
     <div className="space-y-6">
@@ -562,29 +582,29 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <h1 className="text-xl font-bold text-zinc-900">{t(language, 'reports')}</h1>
           <p className="text-xs text-zinc-500">
             {language === 'ar' && project.nameAr ? project.nameAr : project.name} ·{' '}
-            {language === 'ar' && project.space.nameAr ? project.space.nameAr : project.space.name}
+            {activeSpaceName}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => exportToPdf(project, result, lengthUnit, weightUnit)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
+            onClick={() => void exportToPdf(project, result, lengthUnit, weightUnit, undefined, language)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer shadow-sm"
           >
             <FileText className="w-3.5 h-3.5" />
             <span>{t(language, 'exportPdf')}</span>
           </button>
           <button
-            onClick={() => exportToExcel(project, result, lengthUnit, weightUnit)}
+            onClick={() => exportToExcel(project, result, lengthUnit, weightUnit, language)}
             className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
             <span>{t(language, 'exportExcel')}</span>
           </button>
           <button
-            onClick={() => exportToCsv(project, result, lengthUnit, weightUnit)}
+            onClick={() => exportToCsv(project, result, lengthUnit, weightUnit, language)}
             className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="w-3.5 h-3.5 text-red-600" />
             <span>{t(language, 'exportCsv')}</span>
           </button>
           <button
@@ -601,7 +621,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-lg border border-zinc-200 bg-white p-4">
           <div className="text-xs text-zinc-500">{t(language, 'volumeUtil')}</div>
-          <div className="mt-1 text-2xl font-bold font-mono tabular-nums text-orange-600">
+          <div className="mt-1 text-2xl font-bold font-mono tabular-nums text-red-600">
             {result.volumeUtilizationPct}%
           </div>
           <div className="text-[11px] font-mono text-zinc-500">
@@ -639,12 +659,40 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
       </div>
 
+      {maxContainerCount > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5 no-print">
+          {Array.from({ length: maxContainerCount }, (_, idx) => {
+            const cSpace =
+              result.containerSummaries[idx]?.space ??
+              project.spaces?.[idx] ??
+              project.space;
+            const cLabel =
+              language === 'ar' && cSpace.nameAr ? cSpace.nameAr : cSpace.name;
+            const isActive = safeIdx === idx;
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => setContainerIdx(idx)}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors ${
+                  isActive
+                    ? 'border-red-600 bg-red-600 text-white'
+                    : 'border-zinc-200 bg-white text-zinc-700 hover:bg-red-50'
+                }`}
+              >
+                #{idx + 1} · {cLabel}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <Views2D
-        space={project.space}
+        space={activeSpace}
         result={result}
         lengthUnit={lengthUnit}
         language={language}
-        containerIndex={0}
+        containerIndex={safeIdx}
       />
     </div>
   );
@@ -734,7 +782,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdateSe
             type="checkbox"
             checked={settings.lowPerfMode}
             onChange={(e) => onUpdateSettings({ ...settings, lowPerfMode: e.target.checked })}
-            className="accent-orange-600 w-4 h-4"
+            className="accent-red-600 w-4 h-4"
           />
         </label>
       </div>
@@ -752,7 +800,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdateSe
           </div>
           <button
             onClick={handleRunTests}
-            className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer shrink-0"
+            className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer shrink-0 shadow-sm"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span>{t(language, 'runTests')}</span>

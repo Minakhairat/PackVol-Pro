@@ -186,14 +186,14 @@ export const Views2D: React.FC<Views2DProps> = ({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 no-print">
-        <div className="flex items-center gap-1 p-1 bg-zinc-200/80 rounded-lg">
+        <div className="flex items-center gap-1 p-1 bg-zinc-100 border border-zinc-200 rounded-lg">
           {(['all', 'top', 'front', 'side'] as const).map((v) => (
             <button
               key={v}
               onClick={() => setActiveView(v)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 activeView === v
-                  ? 'bg-white text-zinc-900 shadow-sm'
+                  ? 'bg-red-600 text-white shadow-sm'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >

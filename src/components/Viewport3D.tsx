@@ -23,6 +23,7 @@ import {
   SkipForward,
   ChevronDown,
   ChevronUp,
+  Trash2,
 } from 'lucide-react';
 import {
   EmptySpaceBox,
@@ -83,6 +84,7 @@ interface Viewport3DProps {
   allowGlobalRotation?: boolean;
   specsList?: PackageSpec[];
   onManualPlace?: (x: number, y: number, z: number) => void;
+  onRemoveSelected?: (instanceId: string) => void;
 }
 
 const SCALE = 0.001; // 1 unit = 1 meter (mm * 0.001)
@@ -151,13 +153,13 @@ function createStepLabelTexture(label: string, fragile: boolean): THREE.CanvasTe
   canvas.width = 128;
   canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = 'rgba(24, 24, 27, 0.85)';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
   ctx.fillRect(4, 4, 120, 56);
-  ctx.strokeStyle = fragile ? '#ef4444' : '#f97316';
+  ctx.strokeStyle = fragile ? '#b91c1c' : '#dc2626';
   ctx.lineWidth = 3;
   ctx.strokeRect(4, 4, 120, 56);
 
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = '#18181b';
   ctx.font = 'bold 28px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -207,6 +209,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
       allowGlobalRotation = true,
       specsList = [],
       onManualPlace,
+      onRemoveSelected,
     },
     ref
   ) => {
@@ -923,7 +926,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
         // Door clearance frame highlight at rear (+X) or side (+Z)
         const dw = space.doorWidth * SCALE;
         const dh = space.doorHeight * SCALE;
-        const doorMat = new THREE.LineBasicMaterial({ color: '#ea580c' });
+        const doorMat = new THREE.LineBasicMaterial({ color: '#dc2626' });
         if (loadingDirection === 'rear') {
           const dGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(dw, dh));
           const doorOutline = new THREE.LineSegments(dGeo, doorMat);
@@ -1082,8 +1085,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
               color: p.color,
               roughness: p.fragile ? 0.45 : 0.72,
               metalness: 0.04,
-              emissive: isSelected ? new THREE.Color('#f97316') : isActiveStep ? new THREE.Color('#fbbf24') : new THREE.Color('#000000'),
-              emissiveIntensity: isSelected ? 0.35 : isActiveStep ? 0.25 : 0,
+              emissive: isSelected ? new THREE.Color('#dc2626') : isActiveStep ? new THREE.Color('#f59e0b') : new THREE.Color('#000000'),
+              emissiveIntensity: isSelected ? 0.35 : isActiveStep ? 0.22 : 0,
             });
             materialPool.set(matKey, mat);
           }
@@ -1132,7 +1135,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
         const selGeo = new THREE.BoxGeometry(sx + 0.015, sy + 0.015, sz + 0.015);
         const selEdges = new THREE.LineSegments(
           new THREE.EdgesGeometry(selGeo),
-          new THREE.LineBasicMaterial({ color: '#ea580c' })
+          new THREE.LineBasicMaterial({ color: '#dc2626' })
         );
         selGeo.dispose();
         selEdges.position.set(
@@ -1269,23 +1272,26 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
           </div>
         )}
 
-        {/* Top-Left Minimal Spec Readout (no backdrop-blur over WebGL) */}
+        {/* Top-Left Minimal Spec Readout (White & Red theme) */}
         <div className="absolute top-3 left-3 z-10 pointer-events-none flex flex-col gap-1.5">
-          <div className="bg-zinc-900/90 text-white px-3 py-1.5 rounded-lg border border-zinc-700/80 shadow-sm pointer-events-auto">
-            <div className="text-xs font-semibold tracking-tight">{spaceDisplayName}</div>
-            <div className="text-[11px] font-mono text-zinc-300 tabular-nums mt-0.5">
+          <div className="bg-white/95 text-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-200 shadow-sm pointer-events-auto">
+            <div className="text-xs font-bold tracking-tight text-zinc-900">{spaceDisplayName}</div>
+            <div className="text-[11px] font-mono text-zinc-600 tabular-nums mt-0.5">
               {formatDims(space.internalLength, space.internalWidth, space.internalHeight, lengthUnit)}
               {' · '}
-              {visibleBoxes.length}/{containerBoxes.length} {t(language, 'pkgsShort')}
+              <span className="text-red-600 font-semibold">
+                {visibleBoxes.length}/{containerBoxes.length}
+              </span>{' '}
+              {t(language, 'pkgsShort')}
             </div>
           </div>
 
           {manualMode && manualTool === 'place' && manualActiveSpec && hoverPreview && (
             <div
-              className={`px-3 py-2 rounded-lg border shadow-md max-w-[300px] text-white ${
+              className={`px-3 py-2 rounded-lg border shadow-md max-w-[300px] ${
                 hoverPreview.validation.valid
-                  ? 'bg-emerald-950/95 border-emerald-500'
-                  : 'bg-red-950/95 border-red-500'
+                  ? 'bg-emerald-50/95 border-emerald-500 text-emerald-950'
+                  : 'bg-red-50/95 border-red-500 text-red-950'
               }`}
             >
               <div className="text-[11px] font-bold">
@@ -1295,7 +1301,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                     ? hoverPreview.validation.reasonAr
                     : hoverPreview.validation.reasonEn}
               </div>
-              <div className="text-[10px] font-mono text-zinc-200 tabular-nums mt-0.5">
+              <div className="text-[10px] font-mono opacity-80 tabular-nums mt-0.5">
                 X: {formatLength(hoverPreview.x, lengthUnit, false)} · Y:{' '}
                 {formatLength(hoverPreview.y, lengthUnit, false)} · Z:{' '}
                 {formatLength(hoverPreview.z, lengthUnit, false)} {lengthUnit}
@@ -1304,20 +1310,25 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
           )}
 
           {selectedPkg && (
-            <div className="bg-zinc-900/95 text-white px-3 py-2.5 rounded-lg border border-orange-500/70 shadow-md max-w-[260px] pointer-events-auto">
+            <div className="bg-white/95 text-zinc-900 px-3 py-2.5 rounded-lg border-2 border-red-600 shadow-lg max-w-[270px] pointer-events-auto">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-orange-400 font-mono">
+                <span className="text-xs font-bold text-red-600 font-mono">
                   #{selectedPkg.stepIndex} · {selectedPkg.sku}
                 </span>
                 <button
                   onClick={() => onSelectPackage(null)}
-                  className="text-[11px] text-zinc-400 hover:text-white cursor-pointer"
+                  className="text-[11px] text-zinc-400 hover:text-zinc-900 cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <div className="text-xs font-medium mt-0.5 truncate">{selectedPkg.name}</div>
-              <div className="mt-1.5 space-y-0.5 text-[11px] font-mono text-zinc-300 tabular-nums">
+              <div className="text-xs font-semibold text-zinc-900 mt-0.5 truncate">
+                {(() => {
+                  const spec = specsMap.get(selectedPkg.packageId);
+                  return language === 'ar' && spec?.nameAr ? spec.nameAr : selectedPkg.name;
+                })()}
+              </div>
+              <div className="mt-1.5 space-y-0.5 text-[11px] font-mono text-zinc-600 tabular-nums">
                 <div>
                   {t(language, 'dimensions')}: {formatDims(selectedPkg.dx, selectedPkg.dz, selectedPkg.dy, lengthUnit)}
                 </div>
@@ -1334,6 +1345,16 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                   {selectedPkg.supportedAreaPct}%
                 </div>
               </div>
+              {onRemoveSelected && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveSelected(selectedPkg.instanceId)}
+                  className="mt-2.5 w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{t(language, 'unloadPackage')}</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1344,7 +1365,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
             <button
               onClick={onExportPng}
               title={t(language, 'exportPng')}
-              className="p-2 rounded-lg bg-zinc-900/90 text-white hover:bg-zinc-800 border border-zinc-700/80 cursor-pointer"
+              className="p-2 rounded-lg bg-white/95 text-zinc-800 hover:bg-red-50 hover:text-red-600 border border-zinc-200 shadow-sm cursor-pointer transition-colors"
             >
               <Camera className="w-4 h-4" />
             </button>
@@ -1353,7 +1374,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
             <button
               onClick={onExpandMobile}
               title={t(language, 'fullscreen')}
-              className="md:hidden p-2 rounded-lg bg-zinc-900/90 text-white hover:bg-zinc-800 border border-zinc-700/80 cursor-pointer"
+              className="md:hidden p-2 rounded-lg bg-white/95 text-zinc-800 hover:bg-red-50 hover:text-red-600 border border-zinc-200 shadow-sm cursor-pointer transition-colors"
             >
               <Maximize2 className="w-4 h-4" />
             </button>
@@ -1364,14 +1385,14 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 w-[calc(100%-24px)] max-w-[820px] flex flex-col items-center">
           <button
             onClick={() => setHudCollapsed((v) => !v)}
-            className="mb-1 inline-flex items-center gap-1 px-3 py-1 rounded-t-md bg-zinc-900/90 text-zinc-200 text-[11px] font-medium border border-b-0 border-zinc-700/80 hover:text-white cursor-pointer"
+            className="mb-1 inline-flex items-center gap-1 px-3 py-1 rounded-t-md bg-white/95 text-zinc-700 text-[11px] font-semibold border border-b-0 border-zinc-200 hover:text-red-600 shadow-sm cursor-pointer"
           >
             {hudCollapsed ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             <span>{hudCollapsed ? t(language, 'showControls') : t(language, 'hideControls')}</span>
           </button>
 
           {!hudCollapsed && (
-            <div className="w-full bg-zinc-900/95 text-zinc-100 rounded-xl border border-zinc-700/90 p-2.5 shadow-xl space-y-2">
+            <div className="w-full bg-white/95 text-zinc-900 rounded-xl border border-zinc-200 p-2.5 shadow-xl space-y-2">
               {/* Row 1: Camera Presets + View Toggles */}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-1 overflow-x-auto">
@@ -1379,10 +1400,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                     <button
                       key={preset}
                       onClick={() => triggerPreset(preset)}
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                         activePreset === preset
-                          ? 'bg-orange-600 text-white'
-                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
                       }`}
                     >
                       {presetLabel(preset)}
@@ -1391,7 +1412,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                   <button
                     onClick={() => triggerPreset('isometric')}
                     title={t(language, 'resetView')}
-                    className="p-1.5 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 cursor-pointer"
+                    className="p-1.5 rounded-md bg-zinc-100 text-zinc-700 hover:bg-zinc-200 cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                   </button>
@@ -1400,8 +1421,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                 <div className="flex items-center gap-1 overflow-x-auto">
                   <button
                     onClick={onToggleWalls}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap ${
-                      showWalls ? 'bg-zinc-700 text-white' : 'bg-zinc-800 text-zinc-400'
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap border ${
+                      showWalls
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-zinc-100 text-zinc-500 border-transparent'
                     }`}
                   >
                     {showWalls ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
@@ -1409,16 +1432,20 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                   </button>
                   <button
                     onClick={onToggleTransparentWalls}
-                    className={`px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap ${
-                      transparentWalls ? 'bg-zinc-700 text-white' : 'bg-zinc-800 text-zinc-400'
+                    className={`px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap border ${
+                      transparentWalls
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-zinc-100 text-zinc-500 border-transparent'
                     }`}
                   >
                     {t(language, 'transparentToggle')}
                   </button>
                   <button
                     onClick={onToggleFloorGrid}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap ${
-                      showFloorGrid ? 'bg-zinc-700 text-white' : 'bg-zinc-800 text-zinc-400'
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap border ${
+                      showFloorGrid
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-zinc-100 text-zinc-500 border-transparent'
                     }`}
                   >
                     <Grid3X3 className="w-3 h-3" />
@@ -1426,8 +1453,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                   </button>
                   <button
                     onClick={onToggleEmptySpaces}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap ${
-                      showEmptySpaces ? 'bg-sky-700 text-white' : 'bg-zinc-800 text-zinc-400'
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap border ${
+                      showEmptySpaces
+                        ? 'bg-sky-50 text-sky-700 border-sky-200'
+                        : 'bg-zinc-100 text-zinc-500 border-transparent'
                     }`}
                   >
                     <BoxIcon className="w-3 h-3" />
@@ -1435,8 +1464,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                   </button>
                   <button
                     onClick={onTogglePackageIds}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap ${
-                      showPackageIds ? 'bg-zinc-700 text-white' : 'bg-zinc-800 text-zinc-400'
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer whitespace-nowrap border ${
+                      showPackageIds
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-zinc-100 text-zinc-500 border-transparent'
                     }`}
                   >
                     <Layers className="w-3 h-3" />
@@ -1447,17 +1478,17 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
 
               {/* Row 2: Step-by-Step Loading Sequence Scrubber */}
               {totalSteps > 0 && (
-                <div className="flex items-center gap-2 pt-1.5 border-t border-zinc-800">
+                <div className="flex items-center gap-2 pt-1.5 border-t border-zinc-200">
                   <button
                     onClick={onTogglePlaySequence}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold cursor-pointer whitespace-nowrap"
                   >
                     {isPlayingSequence ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                     <span>{isPlayingSequence ? t(language, 'pauseSequence') : t(language, 'playSequence')}</span>
                   </button>
                   <button
                     onClick={() => onStepLimitChange(Math.max(1, currentStep - 1))}
-                    className="p-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer"
+                    className="p-1.5 rounded-md bg-zinc-100 hover:bg-zinc-200 text-zinc-700 cursor-pointer"
                   >
                     <SkipBack className="w-3.5 h-3.5" />
                   </button>
@@ -1470,18 +1501,18 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                       const val = Number(e.target.value);
                       onStepLimitChange(val >= totalSteps ? null : val);
                     }}
-                    className="flex-1 accent-orange-500 h-1.5 cursor-pointer"
+                    className="flex-1 accent-red-600 h-1.5 cursor-pointer"
                   />
                   <button
                     onClick={() => {
                       const next = currentStep + 1;
                       onStepLimitChange(next >= totalSteps ? null : next);
                     }}
-                    className="p-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer"
+                    className="p-1.5 rounded-md bg-zinc-100 hover:bg-zinc-200 text-zinc-700 cursor-pointer"
                   >
                     <SkipForward className="w-3.5 h-3.5" />
                   </button>
-                  <span className="text-[11px] font-mono text-zinc-300 tabular-nums whitespace-nowrap min-w-[68px] text-end">
+                  <span className="text-[11px] font-mono text-zinc-700 tabular-nums whitespace-nowrap min-w-[68px] text-end">
                     {currentStep} / {totalSteps}
                   </span>
                 </div>

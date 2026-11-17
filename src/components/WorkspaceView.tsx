@@ -8,6 +8,7 @@ import {
   ArrowDown,
   BookmarkPlus,
   CheckCircle2,
+  Container,
   Copy,
   Crosshair,
   Download,
@@ -38,6 +39,7 @@ import {
   PlacedPackage,
   Project,
 } from '../types/packvol';
+import { SPACE_TEMPLATES } from '../data/presets';
 import { formatDims, formatLength, formatVolume, formatWeight, fromMm, toMm } from '../utils/units';
 import {
   t,
@@ -59,6 +61,7 @@ import {
   buildResultFromManualPlacements,
   computeDropY,
   findNextValidSpot,
+  settleFloatingPackages,
   validateManualPlacement,
 } from '../engine/manualPacker';
 
@@ -109,6 +112,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   const [editingPkg, setEditingPkg] = useState<PackageSpec | null>(null);
   const [showPkgModal, setShowPkgModal] = useState(false);
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const [showAddContainerModal, setShowAddContainerModal] = useState(false);
   const [mobileSection, setMobileSection] = useState<'setup' | '3d' | 'results'>('3d');
   const [resultTab, setResultTab] = useState<'summary' | 'views2d' | 'sequence' | 'strategies'>('summary');
   const [mobileFullscreen3D, setMobileFullscreen3D] = useState(false);
@@ -128,6 +132,31 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
 
   const result = project.lastResult;
+
+  const projectSpaces = useMemo(
+    () => (project.spaces && project.spaces.length > 0 ? project.spaces : [project.space]),
+    [project.spaces, project.space]
+  );
+
+  const activeConfigIdx = Math.min(activeContainerIdx, projectSpaces.length - 1);
+  const configuredSpace = projectSpaces[activeConfigIdx] ?? project.space;
+  const activeSpace =
+    result?.containerSummaries[activeContainerIdx]?.space ??
+    projectSpaces[activeContainerIdx] ??
+    configuredSpace;
+
+  const effectiveSpacesForResult = useMemo(() => {
+    if (result?.containerSummaries?.length) {
+      const fromResult = result.containerSummaries.map(
+        (cs, i) => cs.space ?? projectSpaces[i] ?? project.space
+      );
+      if (projectSpaces.length > fromResult.length) {
+        return [...fromResult, ...projectSpaces.slice(fromResult.length)];
+      }
+      return fromResult;
+    }
+    return projectSpaces;
+  }, [result, projectSpaces, project.space]);
 
   // Reset inspection controls when switching project
   useEffect(() => {
@@ -198,21 +227,128 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     loadingDirection?: LoadingDirection,
     resetResult = false
   ) => {
-    onUpdateProject((prev) => ({
-      ...prev,
-      space,
-      loadingDirection: loadingDirection ?? prev.loadingDirection,
-      lastResult: resetResult ? null : prev.lastResult,
-      updatedAt: Date.now(),
-    }));
+    onUpdateProject((prev) => {
+      const curSpaces = prev.spaces && prev.spaces.length > 0 ? prev.spaces : [prev.space];
+      const idx = Math.min(activeContainerIdx, curSpaces.length - 1);
+      const nextSpaces = curSpaces.map((sp, i) => (i === idx ? space : sp));
+      return {
+        ...prev,
+        space: nextSpaces[0],
+        spaces: nextSpaces,
+        loadingDirection: loadingDirection ?? prev.loadingDirection,
+        lastResult: resetResult ? null : prev.lastResult,
+        updatedAt: Date.now(),
+      };
+    });
     if (resetResult) {
-      setActiveContainerIdx(0);
       setSelectedInstanceId(null);
       setMaxVisibleLayer(null);
       setActiveStepLimit(null);
       setManualUndoStack([]);
       setManualFeedback(null);
     }
+  };
+
+  const handleAddSameSizeContainer = () => {
+    const cloned: LoadingSpace = { ...configuredSpace };
+    const nextIdx = projectSpaces.length;
+    onUpdateProject((prev) => {
+      const curSpaces = prev.spaces && prev.spaces.length > 0 ? prev.spaces : [prev.space];
+      const nextSpaces = [...curSpaces, cloned];
+      const nextResult = prev.lastResult
+        ? buildResultFromManualPlacements(
+            nextSpaces,
+            prev.packages,
+            prev.lastResult.placedPackages,
+            prev.allowRotation,
+            prev.loadingDirection,
+            { mode: prev.lastResult.mode, strategyName: prev.lastResult.strategyName }
+          )
+        : null;
+      return {
+        ...prev,
+        space: nextSpaces[0],
+        spaces: nextSpaces,
+        lastResult: nextResult,
+        updatedAt: Date.now(),
+      };
+    });
+    setActiveContainerIdx(nextIdx);
+    setSelectedInstanceId(null);
+  };
+
+  const handleAddDiffSizeContainer = (tpl: LoadingSpace) => {
+    const nextSpace: LoadingSpace = { ...tpl };
+    const nextIdx = projectSpaces.length;
+    onUpdateProject((prev) => {
+      const curSpaces = prev.spaces && prev.spaces.length > 0 ? prev.spaces : [prev.space];
+      const nextSpaces = [...curSpaces, nextSpace];
+      const nextResult = prev.lastResult
+        ? buildResultFromManualPlacements(
+            nextSpaces,
+            prev.packages,
+            prev.lastResult.placedPackages,
+            prev.allowRotation,
+            prev.loadingDirection,
+            { mode: prev.lastResult.mode, strategyName: prev.lastResult.strategyName }
+          )
+        : null;
+      return {
+        ...prev,
+        space: nextSpaces[0],
+        spaces: nextSpaces,
+        lastResult: nextResult,
+        updatedAt: Date.now(),
+      };
+    });
+    setActiveContainerIdx(nextIdx);
+    setSelectedInstanceId(null);
+    setShowAddContainerModal(false);
+  };
+
+  const handleDeleteContainer = (idxToDelete: number) => {
+    if (projectSpaces.length <= 1) return;
+    const nextActive =
+      activeContainerIdx === idxToDelete
+        ? Math.max(0, idxToDelete - 1)
+        : activeContainerIdx > idxToDelete
+          ? activeContainerIdx - 1
+          : activeContainerIdx;
+
+    onUpdateProject((prev) => {
+      const curSpaces = prev.spaces && prev.spaces.length > 0 ? prev.spaces : [prev.space];
+      if (curSpaces.length <= 1) return prev;
+      const nextSpaces = curSpaces.filter((_, i) => i !== idxToDelete);
+      let nextResult = prev.lastResult;
+      if (nextResult) {
+        const shiftedPlaced = nextResult.placedPackages
+          .filter((p) => p.containerIndex !== idxToDelete)
+          .map((p) =>
+            p.containerIndex > idxToDelete
+              ? { ...p, containerIndex: p.containerIndex - 1 }
+              : p
+          );
+        nextResult = buildResultFromManualPlacements(
+          nextSpaces,
+          prev.packages,
+          shiftedPlaced,
+          prev.allowRotation,
+          prev.loadingDirection,
+          { mode: nextResult.mode, strategyName: nextResult.strategyName }
+        );
+      }
+      return {
+        ...prev,
+        space: nextSpaces[0],
+        spaces: nextSpaces,
+        lastResult: nextResult,
+        updatedAt: Date.now(),
+      };
+    });
+    setActiveContainerIdx(nextActive);
+    setSelectedInstanceId(null);
+    setActiveStepLimit(null);
+    setManualUndoStack([]);
   };
 
   const handleSavePackage = (spec: PackageSpec) => {
@@ -329,7 +465,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
         worker.terminate();
         workerRef.current = null;
         const res = runOptimization({
-          space: project.space,
+          space: projectSpaces[0],
+          spaces: projectSpaces,
           packages: project.packages,
           mode: project.mode,
           allowRotation: project.allowRotation,
@@ -345,7 +482,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
         type: 'optimize',
         jobId,
         payload: {
-          space: project.space,
+          space: projectSpaces[0],
+          spaces: projectSpaces,
           packages: project.packages,
           mode: project.mode,
           allowRotation: project.allowRotation,
@@ -354,7 +492,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
       });
     } catch {
       const res = runOptimization({
-        space: project.space,
+        space: projectSpaces[0],
+        spaces: projectSpaces,
         packages: project.packages,
         mode: project.mode,
         allowRotation: project.allowRotation,
@@ -407,7 +546,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     const list = getAllowedOrientations(
       manualActiveSpec,
       project.allowRotation,
-      project.space,
+      activeSpace,
       project.loadingDirection
     );
     if (list.length > 0) return list;
@@ -419,7 +558,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
         label: 'L×W×H',
       },
     ];
-  }, [manualActiveSpec, project.allowRotation, project.space, project.loadingDirection]);
+  }, [manualActiveSpec, project.allowRotation, activeSpace, project.loadingDirection]);
 
   const manualActiveOrientation = useMemo(() => {
     if (manualAllowedOrientations.length === 0) return null;
@@ -440,11 +579,14 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     const prevPlaced = result?.placedPackages ?? [];
     setManualUndoStack((s) => [...s.slice(-24), prevPlaced]);
     const built = buildResultFromManualPlacements(
-      project.space,
+      effectiveSpacesForResult,
       project.packages,
       nextPlaced,
       project.allowRotation,
-      project.loadingDirection
+      project.loadingDirection,
+      workspaceMode === 'auto' && result
+        ? { mode: result.mode, strategyName: result.strategyName }
+        : undefined
     );
     onUpdateProject((prev) => ({
       ...prev,
@@ -463,7 +605,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     }
 
     const val = validateManualPlacement(
-      project.space,
+      activeSpace,
       activeContainerPlaced,
       manualActiveSpec,
       manualActiveOrientation.dx,
@@ -550,7 +692,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     }
 
     const spot = findNextValidSpot(
-      project.space,
+      activeSpace,
       activeContainerPlaced,
       manualActiveSpec,
       manualActiveOrientation.dx,
@@ -630,7 +772,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
       const allowed = getAllowedOrientations(
         spec,
         project.allowRotation,
-        project.space,
+        activeSpace,
         project.loadingDirection
       );
       if (allowed.length <= 1) {
@@ -656,14 +798,14 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
       nextLabel = nextO.label;
     }
 
-    const nextX = Math.max(0, Math.min(project.space.internalLength - nextDx, selectedPlacedPkg.x + deltaX));
-    const nextZ = Math.max(0, Math.min(project.space.internalWidth - nextDz, selectedPlacedPkg.z + deltaZ));
+    const nextX = Math.max(0, Math.min(activeSpace.internalLength - nextDx, selectedPlacedPkg.x + deltaX));
+    const nextZ = Math.max(0, Math.min(activeSpace.internalWidth - nextDz, selectedPlacedPkg.z + deltaZ));
     const nextY = drop
       ? computeDropY(activeContainerPlaced, nextX, nextZ, nextDx, nextDz, selectedPlacedPkg.instanceId)
       : selectedPlacedPkg.y;
 
     const val = validateManualPlacement(
-      project.space,
+      activeSpace,
       activeContainerPlaced,
       spec,
       nextDx,
@@ -709,25 +851,56 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     });
   };
 
+  const handleRemovePlacedById = (instanceId: string) => {
+    if (!result) return;
+    const nextPlaced = result.placedPackages.filter((p) => p.instanceId !== instanceId);
+    commitManualPlacements(nextPlaced);
+    if (selectedInstanceId === instanceId) {
+      setSelectedInstanceId(null);
+    }
+    setActiveStepLimit(null);
+  };
+
   const handleRemoveSelectedPlaced = () => {
     if (!selectedPlacedPkg) return;
-    const nextPlaced = (result?.placedPackages ?? []).filter(
-      (p) => p.instanceId !== selectedPlacedPkg.instanceId
-    );
-    commitManualPlacements(nextPlaced);
-    setSelectedInstanceId(null);
+    handleRemovePlacedById(selectedPlacedPkg.instanceId);
   };
+
+  const handleSettleFloating = () => {
+    if (!result) return;
+    const settledInCont = settleFloatingPackages(activeSpace, activeContainerPlaced);
+    const others = result.placedPackages.filter((p) => p.containerIndex !== activeContainerIdx);
+    commitManualPlacements([...others, ...settledInCont]);
+    setManualFeedback({ ok: true, msg: t(language, 'floatingSettledMsg') });
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!selectedInstanceId) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        handleRemovePlacedById(selectedInstanceId);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   const handleUndoManual = () => {
     if (manualUndoStack.length === 0) return;
     const prevPlaced = manualUndoStack[manualUndoStack.length - 1];
     setManualUndoStack((s) => s.slice(0, -1));
     const built = buildResultFromManualPlacements(
-      project.space,
+      effectiveSpacesForResult,
       project.packages,
       prevPlaced,
       project.allowRotation,
-      project.loadingDirection
+      project.loadingDirection,
+      workspaceMode === 'auto' && result
+        ? { mode: result.mode, strategyName: result.strategyName }
+        : undefined
     );
     onUpdateProject((prev) => ({
       ...prev,
@@ -756,7 +929,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   const handleExportPdf = () => {
     if (!result) return;
     const snapshot = viewportRef.current?.captureSnapshot();
-    exportToPdf(project, result, lengthUnit, weightUnit, snapshot);
+    void exportToPdf(project, result, lengthUnit, weightUnit, snapshot, language);
   };
 
   // Distinct categories & max layer in active container
@@ -797,7 +970,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                 updatedAt: Date.now(),
               }))
             }
-            className="text-base font-bold text-zinc-900 bg-transparent border-b border-transparent hover:border-zinc-300 focus:border-orange-500 focus:outline-none truncate min-w-0 flex-1"
+            className="text-base font-bold text-zinc-900 bg-transparent border-b border-transparent hover:border-zinc-300 focus:border-red-600 focus:outline-none truncate min-w-0 flex-1"
           />
           <span className="hidden sm:inline text-xs font-mono text-zinc-500 tabular-nums shrink-0">
             {totalManifestQty} {t(language, 'pkgsShort')} ·{' '}
@@ -813,7 +986,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               onClick={() => setWorkspaceMode('auto')}
               className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 workspaceMode === 'auto'
-                  ? 'bg-zinc-900 text-white shadow-sm'
+                  ? 'bg-red-600 text-white shadow-sm'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
@@ -825,7 +998,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               onClick={() => setWorkspaceMode('manual')}
               className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 workspaceMode === 'manual'
-                  ? 'bg-orange-600 text-white shadow-sm'
+                  ? 'bg-red-600 text-white shadow-sm'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
@@ -838,20 +1011,20 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             <>
               <button
                 onClick={handleExportPdf}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-red-50 hover:border-red-300 cursor-pointer"
               >
                 <FileText className="w-3.5 h-3.5 text-red-600" />
                 <span>PDF</span>
               </button>
               <button
-                onClick={() => exportToExcel(project, result, lengthUnit, weightUnit)}
+                onClick={() => exportToExcel(project, result, lengthUnit, weightUnit, language)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Excel</span>
               </button>
               <button
-                onClick={() => exportToCsv(project, result, lengthUnit, weightUnit)}
+                onClick={() => exportToCsv(project, result, lengthUnit, weightUnit, language)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5 text-zinc-600" />
@@ -863,7 +1036,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
           {isOptimizing ? (
             <button
               onClick={handleCancelOptimization}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-700 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
               <span>
@@ -873,7 +1046,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
           ) : (
             <button
               onClick={handleRunOptimization}
-              className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-orange-500 transition-colors cursor-pointer whitespace-nowrap"
+              className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-red-700 transition-colors cursor-pointer whitespace-nowrap shadow-sm"
             >
               <Play className="w-4 h-4 fill-current" />
               <span>{t(language, 'optimizeNow')}</span>
@@ -884,16 +1057,16 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
       {/* Progress / Error banners */}
       {isOptimizing && (
-        <div className="bg-zinc-900 text-white rounded-lg px-4 py-2.5 flex items-center justify-between gap-4">
-          <div className="text-xs font-medium truncate">{optStage}</div>
+        <div className="bg-white border border-red-200 text-zinc-900 rounded-lg px-4 py-2.5 flex items-center justify-between gap-4 shadow-sm">
+          <div className="text-xs font-semibold text-red-700 truncate">{optStage}</div>
           <div className="flex items-center gap-3 w-48 shrink-0">
-            <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
+            <div className="flex-1 h-2 bg-red-100 rounded-full overflow-hidden">
               <div
-                className="h-full bg-orange-500 transition-all duration-150"
+                className="h-full bg-red-600 transition-all duration-150"
                 style={{ width: `${optProgress}%` }}
               />
             </div>
-            <span className="text-xs font-mono tabular-nums">{optProgress}%</span>
+            <span className="text-xs font-mono tabular-nums text-red-700 font-bold">{optProgress}%</span>
           </div>
         </div>
       )}
@@ -934,11 +1107,83 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             mobileSection === 'setup' ? 'block' : 'hidden md:block'
           }`}
         >
-          {/* Loading Space Card */}
+          {/* Loading Space & Container Fleet Card */}
           <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
-            <h2 className="text-sm font-bold text-zinc-900">{t(language, 'loadingSpace')}</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-bold text-zinc-900 flex items-center gap-1.5">
+                <Container className="w-4 h-4 text-red-600" />
+                <span>
+                  {t(language, 'containerFleet')} ({projectSpaces.length})
+                </span>
+              </h2>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleAddSameSizeContainer}
+                  className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100 cursor-pointer whitespace-nowrap"
+                >
+                  {t(language, 'addSameSizeContainer')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddContainerModal(true)}
+                  className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 cursor-pointer whitespace-nowrap"
+                >
+                  {t(language, 'addDiffSizeContainer')}
+                </button>
+              </div>
+            </div>
+
+            {/* Fleet Container Selector & Delete */}
+            <div className="flex flex-wrap gap-1.5">
+              {projectSpaces.map((sp, idx) => {
+                const isActive = activeConfigIdx === idx;
+                const spLabel = language === 'ar' && sp.nameAr ? sp.nameAr : sp.name;
+                return (
+                  <div
+                    key={`${sp.id}-${idx}`}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+                      isActive
+                        ? 'border-red-600 bg-red-600 text-white font-semibold'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveContainerIdx(idx);
+                        setSelectedInstanceId(null);
+                        setActiveStepLimit(null);
+                      }}
+                      className="inline-flex items-center gap-1.5 cursor-pointer text-start"
+                    >
+                      <span className="font-mono font-bold">#{idx + 1}</span>
+                      <span className="max-w-[130px] truncate">{spLabel}</span>
+                    </button>
+                    {projectSpaces.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteContainer(idx);
+                        }}
+                        title={t(language, 'deleteContainer')}
+                        className={`p-0.5 rounded cursor-pointer ${
+                          isActive
+                            ? 'text-red-100 hover:text-white hover:bg-red-700'
+                            : 'text-red-500 hover:text-red-700 hover:bg-red-50'
+                        }`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
             <SpaceConfigPanel
-              space={project.space}
+              space={configuredSpace}
               loadingDirection={project.loadingDirection}
               lengthUnit={lengthUnit}
               weightUnit={weightUnit}
@@ -949,10 +1194,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
           {/* Interactive Manual Loading Panel */}
           {workspaceMode === 'manual' && (
-            <div className="rounded-xl border-2 border-orange-500/80 bg-white p-4 space-y-3 shadow-sm">
+            <div className="rounded-xl border-2 border-red-600 bg-white p-4 space-y-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <Hand className="w-4 h-4 text-orange-600" />
+                  <Hand className="w-4 h-4 text-red-600" />
                   <h2 className="text-sm font-bold text-zinc-900">{t(language, 'manualTitle')}</h2>
                 </div>
                 <div className="flex items-center gap-1">
@@ -986,7 +1231,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   onClick={() => setManualTool('place')}
                   className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer ${
                     manualTool === 'place'
-                      ? 'bg-orange-600 text-white shadow-sm'
+                      ? 'bg-red-600 text-white shadow-sm'
                       : 'text-zinc-600 hover:text-zinc-900'
                   }`}
                 >
@@ -998,7 +1243,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   onClick={() => setManualTool('select')}
                   className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer ${
                     manualTool === 'select'
-                      ? 'bg-zinc-900 text-white shadow-sm'
+                      ? 'bg-red-600 text-white shadow-sm'
                       : 'text-zinc-600 hover:text-zinc-900'
                   }`}
                 >
@@ -1033,7 +1278,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                           }}
                           className={`w-full text-start p-2 rounded-lg border flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                             isSel
-                              ? 'border-orange-600 bg-orange-50'
+                              ? 'border-red-600 bg-red-50'
                               : 'border-zinc-200 hover:bg-zinc-50'
                           } ${rem === 0 ? 'opacity-55' : ''}`}
                         >
@@ -1055,7 +1300,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                           <span
                             className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded shrink-0 ${
                               rem > 0
-                                ? 'bg-zinc-900 text-white'
+                                ? 'bg-red-600 text-white'
                                 : 'bg-emerald-100 text-emerald-800'
                             }`}
                           >
@@ -1157,7 +1402,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     <button
                       type="button"
                       onClick={handleAutoPlaceNext}
-                      className="rounded-lg bg-orange-600 hover:bg-orange-500 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
+                      className="rounded-lg bg-red-600 hover:bg-red-700 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
                     >
                       {t(language, 'autoPlaceNext')}
                     </button>
@@ -1261,7 +1506,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   updatedAt: Date.now(),
                 }))
               }
-              className="w-full rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-medium text-zinc-900 focus:outline-none focus:border-orange-500"
+              className="w-full rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-medium text-zinc-900 focus:outline-none focus:border-red-600"
             >
               <option value="balanced">{t(language, 'modeBalanced')}</option>
               <option value="max_volume">{t(language, 'modeMaxVolume')}</option>
@@ -1282,7 +1527,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     updatedAt: Date.now(),
                   }))
                 }
-                className="accent-orange-600 w-4 h-4"
+                className="accent-red-600 w-4 h-4"
               />
             </label>
           </div>
@@ -1311,7 +1556,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     setEditingPkg(null);
                     setShowPkgModal(true);
                   }}
-                  className="inline-flex items-center gap-1 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
+                  className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>{t(language, 'addPackage')}</span>
@@ -1456,7 +1701,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                         <button
                           onClick={() => onSaveToLibrary(pkg)}
                           title={t(language, 'saveToLibrary')}
-                          className="p-1 text-zinc-500 hover:text-orange-600 cursor-pointer"
+                          className="p-1 text-zinc-500 hover:text-red-600 cursor-pointer"
                         >
                           <BookmarkPlus className="w-3.5 h-3.5" />
                         </button>
@@ -1476,7 +1721,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
           </div>
         </div>
 
-        {/* Right Area: 3D Viewport + Filter Toolbar + Results */}
+        {/* Right Area: 3D Viewport + Selected Package Strip + Filter Toolbar + Results */}
         <div
           className={`lg:col-span-7 xl:col-span-8 space-y-4 ${
             mobileSection === 'setup' ? 'hidden md:block' : 'block'
@@ -1495,14 +1740,14 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             {mobileFullscreen3D && (
               <button
                 onClick={() => setMobileFullscreen3D(false)}
-                className="fixed top-4 right-4 z-50 rounded-lg bg-zinc-900 text-white px-3 py-1.5 text-xs font-semibold border border-zinc-700 shadow-lg"
+                className="fixed top-4 right-4 z-50 rounded-lg bg-red-600 text-white px-3 py-1.5 text-xs font-semibold shadow-lg cursor-pointer"
               >
                 {t(language, 'close')}
               </button>
             )}
             <Viewport3D
               ref={viewportRef}
-              space={project.space}
+              space={activeSpace}
               loadingDirection={project.loadingDirection}
               placedPackages={result?.placedPackages ?? []}
               emptySpaces={result?.emptySpaces ?? []}
@@ -1556,28 +1801,110 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               allowGlobalRotation={project.allowRotation}
               specsList={project.packages}
               onManualPlace={handleManualPlaceAt}
+              onRemoveSelected={handleRemovePlacedById}
             />
           </div>
 
+          {/* Universal Selected Placed Box Quick-Action Bar (Auto & Manual Modes) */}
+          {(selectedPlacedPkg || manualUndoStack.length > 0 || (result && !result.verification.isValid)) && (
+            <div className="rounded-xl border border-red-200 bg-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+              {selectedPlacedPkg ? (
+                <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                  <span
+                    className="w-3.5 h-3.5 rounded-sm shrink-0 border border-black/15"
+                    style={{ backgroundColor: selectedPlacedPkg.color }}
+                  />
+                  <div className="text-xs min-w-0">
+                    <span className="font-mono font-bold text-red-600">
+                      #{selectedPlacedPkg.stepIndex} · {selectedPlacedPkg.sku}
+                    </span>{' '}
+                    <span className="font-semibold text-zinc-900">
+                      {(() => {
+                        const spec = specsMap.get(selectedPlacedPkg.packageId);
+                        return language === 'ar' && spec?.nameAr ? spec.nameAr : selectedPlacedPkg.name;
+                      })()}
+                    </span>
+                    <span className="hidden sm:inline text-[11px] font-mono text-zinc-500 ms-2">
+                      ({formatDims(selectedPlacedPkg.dx, selectedPlacedPkg.dz, selectedPlacedPkg.dy, lengthUnit)}) ·{' '}
+                      {t(language, 'deleteKeyHint')}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs font-medium text-zinc-600">
+                  {result && !result.verification.isValid
+                    ? result.warnings[0]?.message ?? t(language, 'verifiedInvalid')
+                    : t(language, 'undoPlacementChange')}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {result && !result.verification.isValid && activeContainerPlaced.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSettleFloating}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 cursor-pointer"
+                  >
+                    <ArrowDownToLine className="w-3.5 h-3.5" />
+                    <span>{t(language, 'settleFloatingBtn')}</span>
+                  </button>
+                )}
+                {manualUndoStack.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleUndoManual}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    <span>{t(language, 'undoPlacementChange')}</span>
+                  </button>
+                )}
+                {selectedPlacedPkg && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveSelectedPlaced}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{t(language, 'unloadPackage')}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Container Selector + Category & Layer Filter Strip */}
-          {result && (
+          {(result || projectSpaces.length > 1) && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
               {/* Multi-container tabs */}
-              {result.containersUsed > 1 && (
+              {(effectiveSpacesForResult.length > 1 || (result && result.containersUsed > 1)) && (
                 <div className="flex items-center gap-1 overflow-x-auto">
-                  {result.containerSummaries.map((cs) => (
-                    <button
-                      key={cs.containerIndex}
-                      onClick={() => setActiveContainerIdx(cs.containerIndex)}
-                      className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold cursor-pointer whitespace-nowrap ${
-                        activeContainerIdx === cs.containerIndex
-                          ? 'bg-orange-600 text-white'
-                          : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-                      }`}
-                    >
-                      #{cs.containerIndex + 1} ({cs.volumeUtilizationPct}%)
-                    </button>
-                  ))}
+                  {Array.from(
+                    { length: Math.max(projectSpaces.length, result?.containersUsed ?? 1) },
+                    (_, cIdx) => {
+                      const cs = result?.containerSummaries[cIdx];
+                      const sp = cs?.space ?? projectSpaces[cIdx] ?? project.space;
+                      const spShort = language === 'ar' && sp.nameAr ? sp.nameAr : sp.name;
+                      return (
+                        <button
+                          key={cIdx}
+                          onClick={() => {
+                            setActiveContainerIdx(cIdx);
+                            setSelectedInstanceId(null);
+                            setActiveStepLimit(null);
+                          }}
+                          className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold cursor-pointer whitespace-nowrap ${
+                            activeContainerIdx === cIdx
+                              ? 'bg-red-600 text-white'
+                              : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
+                          }`}
+                        >
+                          #{cIdx + 1} · {spShort.slice(0, 14)}
+                          {cs ? ` (${cs.volumeUtilizationPct}%)` : ''}
+                        </button>
+                      );
+                    }
+                  )}
                 </div>
               )}
 
@@ -1642,7 +1969,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
                     onClick={handleRunOptimization}
-                    className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 cursor-pointer"
+                    className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span>{t(language, 'optimizeNow')}</span>
@@ -1651,7 +1978,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     onClick={() => setWorkspaceMode('manual')}
                     className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer"
                   >
-                    <Hand className="w-3.5 h-3.5 text-orange-600" />
+                    <Hand className="w-3.5 h-3.5 text-red-600" />
                     <span>{t(language, 'manualModeBtn')}</span>
                   </button>
                 </div>
@@ -1673,7 +2000,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                       onClick={() => setResultTab(id)}
                       className={`px-3 py-2 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
                         resultTab === id
-                          ? 'border-orange-600 text-orange-600'
+                          ? 'border-red-600 text-red-600'
                           : 'border-transparent text-zinc-600 hover:text-zinc-900'
                       }`}
                     >
@@ -1740,7 +2067,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div className="rounded-lg border border-zinc-200 p-3">
                           <div className="text-[11px] text-zinc-500">{t(language, 'volumeUtil')}</div>
-                          <div className="mt-1 text-xl font-bold font-mono tabular-nums text-orange-600">
+                          <div className="mt-1 text-xl font-bold font-mono tabular-nums text-red-600">
                             {result.volumeUtilizationPct}%
                           </div>
                           <div className="text-[11px] font-mono text-zinc-500 mt-0.5">
@@ -1888,7 +2215,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
                   {resultTab === 'views2d' && (
                     <Views2D
-                      space={project.space}
+                      space={activeSpace}
                       result={result}
                       lengthUnit={lengthUnit}
                       language={language}
@@ -1910,11 +2237,14 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                             <th className="py-2 px-2 text-start font-semibold">{t(language, 'dimensions')}</th>
                             <th className="py-2 px-2 text-start font-semibold">{t(language, 'orientation')}</th>
                             <th className="py-2 px-2 text-end font-semibold">{t(language, 'weight')}</th>
+                            <th className="py-2 px-2 text-end font-semibold">{t(language, 'removeCol')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-100">
                           {activeContainerSequence.map((p: PlacedPackage) => {
                             const isSel = selectedInstanceId === p.instanceId;
+                            const spec = specsMap.get(p.packageId);
+                            const pkgLabel = language === 'ar' && spec?.nameAr ? spec.nameAr : p.name;
                             return (
                               <tr
                                 key={p.instanceId}
@@ -1924,10 +2254,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                   setIsPlayingSequence(false);
                                 }}
                                 className={`cursor-pointer transition-colors ${
-                                  isSel ? 'bg-orange-50 font-semibold' : 'hover:bg-zinc-50'
+                                  isSel ? 'bg-red-50 font-semibold' : 'hover:bg-zinc-50'
                                 }`}
                               >
-                                <td className="py-2 px-2 font-mono tabular-nums text-orange-600 font-bold">
+                                <td className="py-2 px-2 font-mono tabular-nums text-red-600 font-bold">
                                   #{p.stepIndex}
                                 </td>
                                 <td className="py-2 px-2 font-mono text-zinc-700">{p.sku}</td>
@@ -1936,7 +2266,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                     className="inline-block w-2.5 h-2.5 rounded-sm me-1.5 align-middle"
                                     style={{ backgroundColor: p.color }}
                                   />
-                                  {p.name}
+                                  {pkgLabel}
                                 </td>
                                 <td className="py-2 px-2 font-mono tabular-nums text-zinc-600">
                                   ({fromMm(p.x, lengthUnit)}, {fromMm(p.y, lengthUnit)}, {fromMm(p.z, lengthUnit)}) {lengthUnit}
@@ -1947,6 +2277,19 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                 <td className="py-2 px-2 font-mono text-zinc-600">{p.orientationLabel}</td>
                                 <td className="py-2 px-2 text-end font-mono tabular-nums text-zinc-800">
                                   {formatWeight(p.weight, weightUnit)}
+                                </td>
+                                <td className="py-2 px-2 text-end">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemovePlacedById(p.instanceId);
+                                    }}
+                                    title={t(language, 'unloadPackage')}
+                                    className="p-1 rounded text-red-500 hover:text-red-700 hover:bg-red-100 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
                                 </td>
                               </tr>
                             );
@@ -1977,12 +2320,12 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                             return (
                               <tr
                                 key={st.strategyId}
-                                className={isWinner ? 'bg-orange-50/70 font-semibold' : ''}
+                                className={isWinner ? 'bg-red-50/80 font-semibold' : ''}
                               >
                                 <td className="py-2 px-2 text-zinc-900">
                                   {translateStrategyName(language, st.strategyName)}
                                   {isWinner && (
-                                    <span className="ms-2 text-[10px] font-mono text-orange-600">
+                                    <span className="ms-2 text-[10px] font-mono text-red-600">
                                       {t(language, 'selectedBadge')}
                                     </span>
                                   )}
@@ -1990,7 +2333,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                 <td className="py-2 px-2 text-end font-mono tabular-nums">
                                   {st.loadedCount}/{st.totalRequested}
                                 </td>
-                                <td className="py-2 px-2 text-end font-mono tabular-nums text-orange-600">
+                                <td className="py-2 px-2 text-end font-mono tabular-nums text-red-600">
                                   {st.volumeUtilizationPct}%
                                 </td>
                                 <td className="py-2 px-2 text-end font-mono tabular-nums">
@@ -2041,13 +2384,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
       {/* Pick From Product Library Modal */}
       {showLibraryPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-lg rounded-xl bg-white border border-zinc-200 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 bg-zinc-900 text-white">
+            <div className="flex items-center justify-between px-4 py-3 bg-red-600 text-white">
               <h3 className="text-sm font-semibold">{t(language, 'library')}</h3>
               <button
                 onClick={() => setShowLibraryPicker(false)}
-                className="p-1 text-zinc-400 hover:text-white cursor-pointer"
+                className="p-1 text-red-100 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2075,12 +2418,55 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   </div>
                   <button
                     onClick={() => handleAddFromLibrary(item)}
-                    className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 shrink-0 cursor-pointer"
+                    className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 shrink-0 cursor-pointer"
                   >
                     + {t(language, 'addPackage')}
                   </button>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Different Container / Space Size Modal */}
+      {showAddContainerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-xl rounded-xl bg-white border border-zinc-200 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-red-600 text-white">
+              <h3 className="text-sm font-semibold">{t(language, 'selectContainerTemplate')}</h3>
+              <button
+                onClick={() => setShowAddContainerModal(false)}
+                className="p-1 text-red-100 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="divide-y divide-zinc-100 max-h-[68vh] overflow-y-auto">
+              {SPACE_TEMPLATES.map((tpl) => {
+                const tplName = language === 'ar' && tpl.nameAr ? tpl.nameAr : tpl.name;
+                return (
+                  <div
+                    key={tpl.id}
+                    className="p-3.5 flex items-center justify-between gap-3 hover:bg-red-50/40"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-zinc-900 truncate">{tplName}</div>
+                      <div className="text-[11px] font-mono text-zinc-500 tabular-nums mt-0.5">
+                        {formatDims(tpl.internalLength, tpl.internalWidth, tpl.internalHeight, lengthUnit)} ·{' '}
+                        {t(language, 'maxPayload')}: {formatWeight(tpl.maxPayload, weightUnit)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAddDiffSizeContainer(tpl)}
+                      className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 shrink-0 cursor-pointer"
+                    >
+                      {language === 'ar' ? '+ إضافة حاوية' : '+ Add Container'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

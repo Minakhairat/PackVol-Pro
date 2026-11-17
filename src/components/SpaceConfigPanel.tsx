@@ -82,7 +82,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
             }}
             className={`py-1.5 px-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer truncate ${
               space.category === cat.id
-                ? 'bg-white text-zinc-900 shadow-sm font-semibold'
+                ? 'bg-red-600 text-white shadow-sm font-semibold'
                 : 'text-zinc-600 hover:text-zinc-900'
             }`}
           >
@@ -99,7 +99,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
         <select
           value={templatesForCat.some((s) => s.id === space.id) ? space.id : templatesForCat[0]?.id ?? ''}
           onChange={(e) => handleSelectTemplate(e.target.value)}
-          className="w-full rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-medium text-zinc-900 focus:outline-none focus:border-orange-500"
+          className="w-full rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-medium text-zinc-900 focus:outline-none focus:border-red-600"
         >
           {templatesForCat.map((tpl) => (
             <option key={tpl.id} value={tpl.id}>

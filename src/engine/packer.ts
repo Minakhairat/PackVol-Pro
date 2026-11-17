@@ -58,6 +58,7 @@ interface PlacedInternal extends PlacedPackage {
 
 export interface OptimizeOptions {
   space: LoadingSpace;
+  spaces?: LoadingSpace[];
   packages: PackageSpec[];
   mode: OptimizationMode;
   allowRotation: boolean;
@@ -602,10 +603,11 @@ function scoreCandidate(
 }
 
 function packSingleStrategy(
-  space: LoadingSpace,
+  spaces: LoadingSpace[],
   baseItems: PackItem[],
   strategy: StrategyId,
   mode: OptimizationMode,
+  allowRotation: boolean,
   loadingDirection: LoadingDirection,
   shouldCancel?: () => boolean
 ): {
@@ -615,10 +617,22 @@ function packSingleStrategy(
 } {
   const ordered = sortItemsForStrategy(baseItems, strategy, mode);
   const multiContainer = mode === 'min_vehicles';
-  const maxContainers = multiContainer ? 40 : 1;
+  const maxContainers = multiContainer ? Math.max(40, spaces.length) : spaces.length;
 
-  const containers: ContainerState[] = [new ContainerState(space, 0)];
+  const containers: ContainerState[] = spaces.map((sp, i) => new ContainerState(sp, i));
   const unloadedItems: PackItem[] = [];
+
+  const orientCache = new Map<string, Orientation[]>();
+  const getOrientationsForContainer = (spec: PackageSpec, cont: ContainerState): Orientation[] => {
+    const dir = spaces.length <= 1 ? loadingDirection : cont.space.loadingDirection ?? loadingDirection;
+    const key = `${spec.id}__${cont.space.id}__${cont.space.internalLength}x${cont.space.internalWidth}x${cont.space.internalHeight}__${cont.space.doorWidth}x${cont.space.doorHeight}__${dir}`;
+    let cached = orientCache.get(key);
+    if (!cached) {
+      cached = getAllowedOrientations(spec, allowRotation, cont.space, dir);
+      orientCache.set(key, cached);
+    }
+    return cached;
+  };
 
   for (let idx = 0; idx < ordered.length; idx++) {
     if (shouldCancel && idx % 25 === 0 && shouldCancel()) {
@@ -626,16 +640,20 @@ function packSingleStrategy(
     }
 
     const item = ordered[idx];
-    if (item.orientations.length === 0) {
-      unloadedItems.push(item);
-      continue;
-    }
-
     let placed = false;
 
     for (let cIdx = 0; cIdx < containers.length; cIdx++) {
       const cont = containers[cIdx];
-      if (cont.totalWeight + item.spec.weight > space.maxPayload + 0.01) continue;
+      if (cont.totalWeight + item.spec.weight > cont.space.maxPayload + 0.01) continue;
+
+      const contOrientations =
+        spaces.length <= 1 && cIdx === 0
+          ? item.orientations
+          : getOrientationsForContainer(item.spec, cont);
+      if (contOrientations.length === 0) continue;
+
+      const dir =
+        spaces.length <= 1 ? loadingDirection : cont.space.loadingDirection ?? loadingDirection;
 
       const candidatePoints: Point3D[] =
         strategy === 'guillotine'
@@ -660,7 +678,7 @@ function packSingleStrategy(
 
       for (let pIdx = 0; pIdx < pts.length; pIdx++) {
         const pt = pts[pIdx];
-        for (const o of item.orientations) {
+        for (const o of contOrientations) {
           const check = cont.canPlaceAt(pt.x, pt.y, pt.z, o.dx, o.dy, o.dz, item.spec);
           if (!check.ok) continue;
 
@@ -676,7 +694,7 @@ function packSingleStrategy(
             break;
           }
 
-          const sc = scoreCandidate(cont, pt.x, pt.y, pt.z, o, item, strategy, mode, loadingDirection);
+          const sc = scoreCandidate(cont, pt.x, pt.y, pt.z, o, item, strategy, mode, dir);
           if (sc < bestScore) {
             bestScore = sc;
             bestChoice = {
@@ -708,8 +726,10 @@ function packSingleStrategy(
     }
 
     if (!placed && multiContainer && containers.length < maxContainers) {
-      const nextCont = new ContainerState(space, containers.length);
-      for (const o of item.orientations) {
+      const templateSpace = spaces[spaces.length - 1] ?? spaces[0];
+      const nextCont = new ContainerState(templateSpace, containers.length);
+      const contOrientations = getOrientationsForContainer(item.spec, nextCont);
+      for (const o of contOrientations) {
         const check = nextCont.canPlaceAt(0, 0, 0, o.dx, o.dy, o.dz, item.spec);
         if (check.ok) {
           nextCont.commitPlacement(0, 0, 0, o, item, check.supporters, check.supportedAreaPct);
@@ -785,10 +805,12 @@ function computeBalanceScore(cont: ContainerState): { cog: { x: number; y: numbe
 function diagnoseUnloaded(
   specs: PackageSpec[],
   placed: PlacedPackage[],
-  space: LoadingSpace,
+  spacesList: LoadingSpace[],
   allowRotation: boolean,
   loadingDirection: LoadingDirection
 ): { details: UnloadedPackageReason[]; warnings: OptimizationWarning[] } {
+  const space = spacesList[0];
+  const totalPayloadCap = spacesList.reduce((s, sp) => s + sp.maxPayload, 0);
   const loadedBySpec = new Map<string, number>();
   for (const p of placed) {
     loadedBySpec.set(p.packageId, (loadedBySpec.get(p.packageId) ?? 0) + 1);
@@ -807,21 +829,25 @@ function diagnoseUnloaded(
     const reasons: UnloadedReasonCode[] = [];
     const notes: string[] = [];
 
-    // Check dimension containment regardless of door/rotation
-    const fitsRaw =
-      spec.length <= space.internalLength + EPS &&
-      spec.width <= space.internalWidth + EPS &&
-      spec.height <= space.internalHeight + EPS;
+    const fitsInAny = spacesList.some(
+      (sp) => getAllowedOrientations(spec, allowRotation, sp, loadingDirection).length > 0
+    );
+    const fitsRawInAny = spacesList.some(
+      (sp) =>
+        spec.length <= sp.internalLength + EPS &&
+        spec.width <= sp.internalWidth + EPS &&
+        spec.height <= sp.internalHeight + EPS
+    );
 
-    const orientations = getAllowedOrientations(spec, allowRotation, space, loadingDirection);
-
-    if (orientations.length === 0) {
-      if (!fitsRaw && (!allowRotation || !spec.rotatable)) {
+    if (!fitsInAny) {
+      if (!fitsRawInAny && (!allowRotation || !spec.rotatable)) {
         reasons.push('EXCEEDS_SPACE_DIMS', 'ORIENTATION_LOCKED');
         notes.push('Exceeds internal container dimensions with rotation disabled.');
       } else if (
-        (loadingDirection === 'rear' && (spec.width > space.doorWidth || spec.height > space.doorHeight)) ||
-        (loadingDirection === 'side' && (spec.length > space.doorWidth || spec.height > space.doorHeight))
+        (loadingDirection === 'rear' &&
+          spacesList.every((sp) => spec.width > sp.doorWidth || spec.height > sp.doorHeight)) ||
+        (loadingDirection === 'side' &&
+          spacesList.every((sp) => spec.length > sp.doorWidth || spec.height > sp.doorHeight))
       ) {
         reasons.push('EXCEEDS_DOOR_CLEARANCE');
         notes.push(`Exceeds ${loadingDirection} door opening (${space.doorWidth}×${space.doorHeight} mm).`);
@@ -831,18 +857,22 @@ function diagnoseUnloaded(
       }
     }
 
-    if (spec.weight > space.maxPayload) {
+    const maxSinglePayload = Math.max(...spacesList.map((sp) => sp.maxPayload));
+    if (spec.weight > maxSinglePayload) {
       reasons.push('EXCEEDS_PAYLOAD');
-      notes.push(`Single unit weight (${spec.weight} kg) exceeds container max payload (${space.maxPayload} kg).`);
-    } else if (totalLoadedWeight + spec.weight > space.maxPayload) {
+      notes.push(`Single unit weight (${spec.weight} kg) exceeds container max payload (${maxSinglePayload} kg).`);
+    } else if (totalLoadedWeight + spec.weight > totalPayloadCap) {
       reasons.push('EXCEEDS_PAYLOAD');
-      notes.push(`Remaining payload (${Math.max(0, space.maxPayload - totalLoadedWeight).toFixed(1)} kg) insufficient for ${spec.weight} kg unit.`);
+      notes.push(`Remaining payload (${Math.max(0, totalPayloadCap - totalLoadedWeight).toFixed(1)} kg) insufficient for ${spec.weight} kg unit.`);
     }
 
     if (
-      space.floorWeightLimit &&
-      space.floorWeightLimit > 0 &&
-      spec.weight / ((spec.length / 1000) * (spec.width / 1000)) > space.floorWeightLimit
+      spacesList.every(
+        (sp) =>
+          sp.floorWeightLimit &&
+          sp.floorWeightLimit > 0 &&
+          spec.weight / ((spec.length / 1000) * (spec.width / 1000)) > sp.floorWeightLimit
+      )
     ) {
       reasons.push('FLOOR_LOAD_EXCEEDED');
       notes.push(`Floor pressure exceeds ${space.floorWeightLimit} kg/m² limit.`);
@@ -901,12 +931,14 @@ function diagnoseUnloaded(
 export function runOptimization(options: OptimizeOptions): OptimizationResult {
   const startTime = performance.now();
   const { space, packages, mode, allowRotation, loadingDirection, onProgress, shouldCancel } = options;
+  const configuredSpaces = options.spaces && options.spaces.length > 0 ? options.spaces : [space];
+  const primarySpace = configuredSpaces[0];
 
   const items: PackItem[] = [];
   for (const spec of packages) {
     const qty = Math.max(0, Math.floor(spec.quantity));
     if (qty <= 0 || spec.length <= 0 || spec.width <= 0 || spec.height <= 0) continue;
-    const orientations = getAllowedOrientations(spec, allowRotation, space, loadingDirection);
+    const orientations = getAllowedOrientations(spec, allowRotation, primarySpace, loadingDirection);
     const volume = spec.length * spec.width * spec.height;
     const baseArea = spec.length * spec.width;
     for (let q = 0; q < qty; q++) {
@@ -914,7 +946,6 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
     }
   }
 
-  const singleSpaceVol = space.internalLength * space.internalWidth * space.internalHeight;
   const totalRequiredPackages = items.length;
 
   // Evaluate strategies (limit full multi-strategy sweep if >1200 items to keep UX crisp)
@@ -940,7 +971,15 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
     onProgress?.(Math.round(((i + 0.3) / activeStrategies.length) * 85), strat.name);
 
     const t0 = performance.now();
-    const run = packSingleStrategy(space, items, strat.id, mode, loadingDirection, shouldCancel);
+    const run = packSingleStrategy(
+      configuredSpaces,
+      items,
+      strat.id,
+      mode,
+      allowRotation,
+      loadingDirection,
+      shouldCancel
+    );
     if (run.cancelled) break;
 
     const rawPlaced: PlacedPackage[] = [];
@@ -956,16 +995,27 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
     }
 
     const orderedPlaced = reorderLoadingSequence(rawPlaced, loadingDirection);
-    const verification = verifyPackingSolution(space, packages, orderedPlaced, allowRotation, loadingDirection);
+    const containerSpacesList = run.containers.map((c) => c.space);
+    const verification = verifyPackingSolution(
+      containerSpacesList,
+      packages,
+      orderedPlaced,
+      allowRotation,
+      loadingDirection
+    );
 
     const containersUsed = run.containers.length;
-    const totalSpaceVol = singleSpaceVol * containersUsed;
+    const totalSpaceVol = run.containers.reduce(
+      (s, c) => s + c.space.internalLength * c.space.internalWidth * c.space.internalHeight,
+      0
+    );
+    const totalPayloadCap = run.containers.reduce((s, c) => s + c.space.maxPayload, 0);
     const occupiedVol = run.containers.reduce((s, c) => s + c.occupiedVolume, 0);
     const totalWeight = run.containers.reduce((s, c) => s + c.totalWeight, 0);
     const volumePct = totalSpaceVol > 0 ? Math.round((occupiedVol / totalSpaceVol) * 10000) / 100 : 0;
     const weightPct =
-      space.maxPayload * containersUsed > 0
-        ? Math.round((totalWeight / (space.maxPayload * containersUsed)) * 10000) / 100
+      totalPayloadCap > 0
+        ? Math.round((totalWeight / totalPayloadCap) * 10000) / 100
         : 0;
     const avgBalance = Math.round(
       run.containers.reduce((s, c) => s + computeBalanceScore(c).score, 0) / Math.max(1, containersUsed)
@@ -1027,41 +1077,54 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
 
   onProgress?.(95, 'Verifying physical constraints...');
 
-  const finalContainers = winner?.containers ?? [new ContainerState(space, 0)];
+  const finalContainers =
+    winner?.containers ?? configuredSpaces.map((sp, i) => new ContainerState(sp, i));
   const finalPlaced = winner?.placed ?? [];
   const finalEmptySpaces = winner?.emptySpaces ?? [];
-  const verification = verifyPackingSolution(space, packages, finalPlaced, allowRotation, loadingDirection);
+  const finalSpacesList = finalContainers.map((c) => c.space);
+  const verification = verifyPackingSolution(
+    finalSpacesList,
+    packages,
+    finalPlaced,
+    allowRotation,
+    loadingDirection
+  );
 
   const containersUsed = finalContainers.length;
-  const totalSpaceVol = singleSpaceVol * containersUsed;
+  const totalSpaceVol = finalContainers.reduce(
+    (s, c) => s + c.space.internalLength * c.space.internalWidth * c.space.internalHeight,
+    0
+  );
   const occupiedVol = finalContainers.reduce((s, c) => s + c.occupiedVolume, 0);
   const totalCargoWeightKg = Math.round(finalContainers.reduce((s, c) => s + c.totalWeight, 0) * 100) / 100;
-  const totalPayloadCap = space.maxPayload * containersUsed;
+  const totalPayloadCap = finalContainers.reduce((s, c) => s + c.space.maxPayload, 0);
 
   const containerSummaries: ContainerSummary[] = finalContainers.map((c) => {
     const bal = computeBalanceScore(c);
+    const cVol = c.space.internalLength * c.space.internalWidth * c.space.internalHeight;
     return {
       containerIndex: c.containerIndex,
+      space: c.space,
       loadedCount: c.placed.length,
       occupiedVolumeMm3: c.occupiedVolume,
-      volumeUtilizationPct: singleSpaceVol > 0 ? Math.round((c.occupiedVolume / singleSpaceVol) * 10000) / 100 : 0,
+      volumeUtilizationPct: cVol > 0 ? Math.round((c.occupiedVolume / cVol) * 10000) / 100 : 0,
       loadedWeightKg: Math.round(c.totalWeight * 100) / 100,
       weightUtilizationPct:
-        space.maxPayload > 0 ? Math.round((c.totalWeight / space.maxPayload) * 10000) / 100 : 0,
+        c.space.maxPayload > 0 ? Math.round((c.totalWeight / c.space.maxPayload) * 10000) / 100 : 0,
       centerOfGravity: bal.cog,
       balanceScore: bal.score,
     };
   });
 
   const firstBal = containerSummaries[0] ?? {
-    centerOfGravity: { x: space.internalLength / 2, y: 0, z: space.internalWidth / 2 },
+    centerOfGravity: { x: primarySpace.internalLength / 2, y: 0, z: primarySpace.internalWidth / 2 },
     balanceScore: 100,
   };
 
   const { details: unloadedDetails, warnings } = diagnoseUnloaded(
     packages,
     finalPlaced,
-    space,
+    finalSpacesList,
     allowRotation,
     loadingDirection
   );

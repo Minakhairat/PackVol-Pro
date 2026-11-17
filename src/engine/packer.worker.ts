@@ -11,6 +11,7 @@ export interface WorkerRequest {
   jobId: string;
   payload?: {
     space: LoadingSpace;
+    spaces?: LoadingSpace[];
     packages: PackageSpec[];
     mode: OptimizationMode;
     allowRotation: boolean;

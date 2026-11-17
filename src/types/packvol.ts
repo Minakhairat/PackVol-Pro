@@ -145,6 +145,7 @@ export interface EmptySpaceBox {
 
 export interface ContainerSummary {
   containerIndex: number;
+  space?: LoadingSpace;
   loadedCount: number;
   occupiedVolumeMm3: number;
   volumeUtilizationPct: number;
@@ -224,6 +225,7 @@ export interface Project {
   description: string;
   descriptionAr?: string;
   space: LoadingSpace;
+  spaces?: LoadingSpace[];
   packages: PackageSpec[];
   mode: OptimizationMode;
   allowRotation: boolean;

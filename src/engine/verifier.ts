@@ -14,12 +14,23 @@ function overlap1D(a0: number, a1: number, b0: number, b1: number): number {
 }
 
 export function verifyPackingSolution(
-  space: LoadingSpace,
+  spaceOrSpaces: LoadingSpace | LoadingSpace[],
   specs: PackageSpec[],
   placed: PlacedPackage[],
   allowGlobalRotation: boolean,
   loadingDirection: LoadingDirection
 ): OptimizationVerification {
+  const spacesList = Array.isArray(spaceOrSpaces)
+    ? spaceOrSpaces.length > 0
+      ? spaceOrSpaces
+      : []
+    : [spaceOrSpaces];
+  const primarySpace = spacesList[0];
+  const getSpace = (cIdx: number): LoadingSpace =>
+    spacesList[cIdx] ?? spacesList[spacesList.length - 1];
+  const getDir = (cIdx: number): LoadingDirection =>
+    spacesList.length <= 1 ? loadingDirection : getSpace(cIdx).loadingDirection ?? loadingDirection;
+
   const specMap = new Map<string, PackageSpec>();
   for (const s of specs) specMap.set(s.id, s);
 
@@ -29,17 +40,18 @@ export function verifyPackingSolution(
   // 1. Boundary Check
   let boundaryFailures = 0;
   for (const p of placed) {
+    const sp = getSpace(p.containerIndex);
     if (
       p.x < -EPS ||
       p.y < -EPS ||
       p.z < -EPS ||
-      p.x + p.dx > space.internalLength + EPS ||
-      p.y + p.dy > space.internalHeight + EPS ||
-      p.z + p.dz > space.internalWidth + EPS
+      p.x + p.dx > sp.internalLength + EPS ||
+      p.y + p.dy > sp.internalHeight + EPS ||
+      p.z + p.dz > sp.internalWidth + EPS
     ) {
       boundaryFailures++;
       if (violations.length < 10) {
-        violations.push(`Package ${p.instanceId} (${p.sku}) exceeds container internal boundaries.`);
+        violations.push(`Package ${p.instanceId} (${p.sku}) exceeds container #${p.containerIndex + 1} internal boundaries.`);
       }
     }
   }
@@ -48,7 +60,7 @@ export function verifyPackingSolution(
     passed: boundaryFailures === 0,
     details:
       boundaryFailures === 0
-        ? `All ${placed.length} packages strictly inside ${space.internalLength}×${space.internalWidth}×${space.internalHeight} mm.`
+        ? `All ${placed.length} packages strictly inside ${primarySpace.internalLength}×${primarySpace.internalWidth}×${primarySpace.internalHeight} mm${spacesList.length > 1 ? ` (+${spacesList.length - 1} unit(s))` : ''}.`
         : `${boundaryFailures} package(s) protrude outside loading space boundaries.`,
   });
 
@@ -92,11 +104,12 @@ export function verifyPackingSolution(
   // 3. Maximum Payload Check
   let payloadFailures = 0;
   for (const [cIdx, group] of byContainer) {
+    const sp = getSpace(cIdx);
     const totalW = group.reduce((sum, p) => sum + p.weight, 0);
-    if (totalW > space.maxPayload + 0.01) {
+    if (totalW > sp.maxPayload + 0.01) {
       payloadFailures++;
       violations.push(
-        `Container #${cIdx + 1} weight ${totalW.toFixed(1)} kg exceeds max payload ${space.maxPayload} kg.`
+        `Container #${cIdx + 1} weight ${totalW.toFixed(1)} kg exceeds max payload ${sp.maxPayload} kg.`
       );
     }
   }
@@ -105,25 +118,27 @@ export function verifyPackingSolution(
     passed: payloadFailures === 0,
     details:
       payloadFailures === 0
-        ? `All ${byContainer.size || 1} space(s) within ${space.maxPayload} kg payload limit.`
+        ? `All ${Math.max(spacesList.length, byContainer.size || 1)} space(s) within payload limits.`
         : `${payloadFailures} space(s) exceed maximum payload.`,
   });
 
   // 4. Door Clearance Check
   let doorFailures = 0;
   for (const p of placed) {
-    if (loadingDirection === 'rear') {
-      if (p.dz > space.doorWidth + EPS || p.dy > space.doorHeight + EPS) {
+    const sp = getSpace(p.containerIndex);
+    const dir = getDir(p.containerIndex);
+    if (dir === 'rear') {
+      if (p.dz > sp.doorWidth + EPS || p.dy > sp.doorHeight + EPS) {
         doorFailures++;
         if (violations.length < 10) {
-          violations.push(`Package ${p.sku} (${p.dz}×${p.dy} mm) exceeds rear door (${space.doorWidth}×${space.doorHeight} mm).`);
+          violations.push(`Package ${p.sku} (${p.dz}×${p.dy} mm) exceeds rear door (${sp.doorWidth}×${sp.doorHeight} mm).`);
         }
       }
-    } else if (loadingDirection === 'side') {
-      if (p.dx > space.doorWidth + EPS || p.dy > space.doorHeight + EPS) {
+    } else if (dir === 'side') {
+      if (p.dx > sp.doorWidth + EPS || p.dy > sp.doorHeight + EPS) {
         doorFailures++;
         if (violations.length < 10) {
-          violations.push(`Package ${p.sku} (${p.dx}×${p.dy} mm) exceeds side door (${space.doorWidth}×${space.doorHeight} mm).`);
+          violations.push(`Package ${p.sku} (${p.dx}×${p.dy} mm) exceeds side door (${sp.doorWidth}×${sp.doorHeight} mm).`);
         }
       }
     }

@@ -457,14 +457,61 @@ export function findNextValidSpot(
   return null;
 }
 
-export function buildResultFromManualPlacements(
+export function settleFloatingPackages(
   space: LoadingSpace,
+  existingInContainer: PlacedPackage[]
+): PlacedPackage[] {
+  const sorted = [...existingInContainer].sort((a, b) => a.y - b.y || a.stepIndex - b.stepIndex);
+  const settled: PlacedPackage[] = [];
+  for (const box of sorted) {
+    const newY = computeDropY(settled, box.x, box.z, box.dx, box.dz, box.instanceId);
+    let layerIndex = 0;
+    let supportedArea = 0;
+    if (newY > EPS) {
+      let maxSupLayer = 0;
+      for (const sup of settled) {
+        if (Math.abs(sup.y + sup.dy - newY) <= 0.5) {
+          const ox = overlap1D(box.x, box.x + box.dx, sup.x, sup.x + sup.dx);
+          const oz = overlap1D(box.z, box.z + box.dz, sup.z, sup.z + sup.dz);
+          if (ox > EPS && oz > EPS) {
+            supportedArea += ox * oz;
+            maxSupLayer = Math.max(maxSupLayer, sup.layerIndex);
+          }
+        }
+      }
+      layerIndex = maxSupLayer + 1;
+    }
+    const baseArea = box.dx * box.dz;
+    const supportedAreaPct =
+      newY <= EPS ? 100 : Math.min(100, Math.round((supportedArea / Math.max(1, baseArea)) * 1000) / 10);
+
+    settled.push({
+      ...box,
+      y: Math.min(newY, Math.max(0, space.internalHeight - box.dy)),
+      layerIndex,
+      supportedAreaPct,
+    });
+  }
+  return settled;
+}
+
+export function buildResultFromManualPlacements(
+  spaceOrSpaces: LoadingSpace | LoadingSpace[],
   packages: PackageSpec[],
   rawPlaced: PlacedPackage[],
   allowRotation: boolean,
-  loadingDirection: LoadingDirection
+  loadingDirection: LoadingDirection,
+  meta?: { mode?: OptimizationResult['mode']; strategyName?: string }
 ): OptimizationResult {
   const t0 = performance.now();
+  const spacesList = Array.isArray(spaceOrSpaces)
+    ? spaceOrSpaces.length > 0
+      ? spaceOrSpaces
+      : []
+    : [spaceOrSpaces];
+  const primarySpace = spacesList[0];
+  const getSpace = (cIdx: number): LoadingSpace =>
+    spacesList[cIdx] ?? spacesList[spacesList.length - 1];
 
   // Re-index stepIndex cleanly per container
   const stepCounters = new Map<number, number>();
@@ -475,17 +522,25 @@ export function buildResultFromManualPlacements(
   });
 
   const maxContIdx = placed.reduce((m, p) => Math.max(m, p.containerIndex), 0);
-  const containersUsed = Math.max(1, maxContIdx + 1);
-  const singleSpaceVol = space.internalLength * space.internalWidth * space.internalHeight;
-  const totalSpaceVol = singleSpaceVol * containersUsed;
+  const containersUsed = Math.max(spacesList.length, maxContIdx + 1);
 
+  let totalSpaceVol = 0;
+  let totalPayloadCap = 0;
+  const effectiveSpaces: LoadingSpace[] = [];
   const containerSummaries: ContainerSummary[] = [];
+
   for (let cIdx = 0; cIdx < containersUsed; cIdx++) {
+    const sp = getSpace(cIdx);
+    effectiveSpaces.push(sp);
+    const singleSpaceVol = sp.internalLength * sp.internalWidth * sp.internalHeight;
+    totalSpaceVol += singleSpaceVol;
+    totalPayloadCap += sp.maxPayload;
+
     const group = placed.filter((p) => p.containerIndex === cIdx);
     const occVol = group.reduce((s, p) => s + p.dx * p.dy * p.dz, 0);
     const totalW = group.reduce((s, p) => s + p.weight, 0);
 
-    let cog = { x: space.internalLength / 2, y: 0, z: space.internalWidth / 2 };
+    let cog = { x: sp.internalLength / 2, y: 0, z: sp.internalWidth / 2 };
     let score = 100;
     if (totalW > 0) {
       const wx = group.reduce((s, p) => s + p.weight * (p.x + p.dx / 2), 0);
@@ -495,18 +550,19 @@ export function buildResultFromManualPlacements(
       const cy = wy / totalW;
       const cz = wz / totalW;
       cog = { x: Math.round(cx), y: Math.round(cy), z: Math.round(cz) };
-      const devX = Math.abs(cx - space.internalLength / 2) / (space.internalLength / 2);
-      const devZ = Math.abs(cz - space.internalWidth / 2) / (space.internalWidth / 2);
+      const devX = Math.abs(cx - sp.internalLength / 2) / (sp.internalLength / 2);
+      const devZ = Math.abs(cz - sp.internalWidth / 2) / (sp.internalWidth / 2);
       score = Math.max(0, Math.min(100, Math.round((1 - (devX * 0.55 + devZ * 0.45)) * 100)));
     }
 
     containerSummaries.push({
       containerIndex: cIdx,
+      space: sp,
       loadedCount: group.length,
       occupiedVolumeMm3: occVol,
       volumeUtilizationPct: singleSpaceVol > 0 ? Math.round((occVol / singleSpaceVol) * 10000) / 100 : 0,
       loadedWeightKg: Math.round(totalW * 100) / 100,
-      weightUtilizationPct: space.maxPayload > 0 ? Math.round((totalW / space.maxPayload) * 10000) / 100 : 0,
+      weightUtilizationPct: sp.maxPayload > 0 ? Math.round((totalW / sp.maxPayload) * 10000) / 100 : 0,
       centerOfGravity: cog,
       balanceScore: score,
     });
@@ -515,9 +571,8 @@ export function buildResultFromManualPlacements(
   const occupiedVol = placed.reduce((s, p) => s + p.dx * p.dy * p.dz, 0);
   const totalWeightKg = Math.round(placed.reduce((s, p) => s + p.weight, 0) * 100) / 100;
   const totalReq = packages.reduce((s, p) => s + Math.max(0, Math.floor(p.quantity)), 0);
-  const totalPayloadCap = space.maxPayload * containersUsed;
 
-  const verification = verifyPackingSolution(space, packages, placed, allowRotation, loadingDirection);
+  const verification = verifyPackingSolution(effectiveSpaces, packages, placed, allowRotation, loadingDirection);
 
   const loadedBySpec = new Map<string, number>();
   for (const p of placed) {
@@ -539,7 +594,7 @@ export function buildResultFromManualPlacements(
         loadedQty: loaded,
         unloadedQty: rem,
         reasons,
-        detail: 'Remaining units pending manual placement.',
+        detail: 'Remaining units pending placement.',
       });
     }
   }
@@ -561,12 +616,13 @@ export function buildResultFromManualPlacements(
   );
 
   const emptySpaces: EmptySpaceBox[] = [];
+  const strategyName = meta?.strategyName ?? 'Manual Interactive Placement';
 
   return {
     id: `manual-${Date.now()}`,
     timestamp: Date.now(),
-    mode: 'balanced',
-    strategyName: 'Manual Interactive Placement',
+    mode: meta?.mode ?? 'balanced',
+    strategyName,
     allowRotation,
     loadingDirection,
     totalRequiredPackages: totalReq,
@@ -582,9 +638,9 @@ export function buildResultFromManualPlacements(
     remainingPayloadKg: Math.max(0, Math.round((totalPayloadCap - totalWeightKg) * 100) / 100),
     weightUtilizationPct: weightPct,
     centerOfGravity: containerSummaries[0]?.centerOfGravity ?? {
-      x: space.internalLength / 2,
+      x: primarySpace.internalLength / 2,
       y: 0,
-      z: space.internalWidth / 2,
+      z: primarySpace.internalWidth / 2,
     },
     balanceScore: avgBalance,
     placedPackages: placed,
@@ -595,7 +651,7 @@ export function buildResultFromManualPlacements(
     strategyComparison: [
       {
         strategyId: 'manual',
-        strategyName: 'Manual Interactive Placement',
+        strategyName,
         loadedCount: placed.length,
         totalRequested: totalReq,
         volumeUtilizationPct: volumePct,
