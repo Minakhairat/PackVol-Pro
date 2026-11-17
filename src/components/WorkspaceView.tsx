@@ -275,6 +275,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     });
     setActiveContainerIdx(nextIdx);
     setSelectedInstanceId(null);
+    setActiveStepLimit(null);
+    setIsPlayingSequence(false);
   };
 
   const handleAddDiffSizeContainer = (tpl: LoadingSpace) => {
@@ -303,6 +305,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     });
     setActiveContainerIdx(nextIdx);
     setSelectedInstanceId(null);
+    setActiveStepLimit(null);
+    setIsPlayingSequence(false);
     setShowAddContainerModal(false);
   };
 
@@ -348,6 +352,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     setActiveContainerIdx(nextActive);
     setSelectedInstanceId(null);
     setActiveStepLimit(null);
+    setIsPlayingSequence(false);
     setManualUndoStack([]);
   };
 
@@ -947,7 +952,9 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
   const activeContainerSequence = useMemo(() => {
     if (!result) return [];
-    return result.placedPackages.filter((p) => p.containerIndex === activeContainerIdx);
+    return result.placedPackages
+      .filter((p) => p.containerIndex === activeContainerIdx)
+      .sort((a, b) => a.stepIndex - b.stepIndex);
   }, [result, activeContainerIdx]);
 
   const totalManifestQty = project.packages.reduce((s, p) => s + p.quantity, 0);
@@ -1767,7 +1774,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               }}
               isPlayingSequence={isPlayingSequence}
               onTogglePlaySequence={() => {
-                if (!isPlayingSequence && activeStepLimit === null) {
+                const containerCount =
+                  result?.placedPackages.filter((p) => p.containerIndex === activeContainerIdx)
+                    .length ?? 0;
+                if (
+                  !isPlayingSequence &&
+                  (activeStepLimit === null || activeStepLimit >= containerCount)
+                ) {
                   setActiveStepLimit(0);
                 }
                 setIsPlayingSequence((p) => !p);
@@ -1892,6 +1905,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                             setActiveContainerIdx(cIdx);
                             setSelectedInstanceId(null);
                             setActiveStepLimit(null);
+                            setIsPlayingSequence(false);
                           }}
                           className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold cursor-pointer whitespace-nowrap ${
                             activeContainerIdx === cIdx
@@ -2241,7 +2255,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-100">
-                          {activeContainerSequence.map((p: PlacedPackage) => {
+                          {activeContainerSequence.map((p: PlacedPackage, idx: number) => {
                             const isSel = selectedInstanceId === p.instanceId;
                             const spec = specsMap.get(p.packageId);
                             const pkgLabel = language === 'ar' && spec?.nameAr ? spec.nameAr : p.name;
@@ -2250,7 +2264,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                 key={p.instanceId}
                                 onClick={() => {
                                   setSelectedInstanceId(p.instanceId);
-                                  setActiveStepLimit(p.stepIndex);
+                                  setActiveStepLimit(idx + 1);
                                   setIsPlayingSequence(false);
                                 }}
                                 className={`cursor-pointer transition-colors ${

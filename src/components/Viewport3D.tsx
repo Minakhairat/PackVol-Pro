@@ -247,18 +247,26 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
     } | null>(null);
 
     const containerBoxes = React.useMemo(
-      () => placedPackages.filter((p) => p.containerIndex === containerIndex),
+      () =>
+        placedPackages
+          .filter((p) => p.containerIndex === containerIndex)
+          .sort((a, b) => a.stepIndex - b.stepIndex),
       [placedPackages, containerIndex]
     );
 
+    const steppedBoxes = React.useMemo(() => {
+      if (activeStepLimit === null) return containerBoxes;
+      const limit = Math.max(0, Math.min(containerBoxes.length, activeStepLimit));
+      return containerBoxes.slice(0, limit);
+    }, [containerBoxes, activeStepLimit]);
+
     const visibleBoxes = React.useMemo(() => {
-      return containerBoxes.filter((p) => {
+      return steppedBoxes.filter((p) => {
         if (hiddenCategories.has(p.category)) return false;
         if (maxVisibleLayer !== null && p.layerIndex > maxVisibleLayer) return false;
-        if (activeStepLimit !== null && p.stepIndex > activeStepLimit) return false;
         return true;
       });
-    }, [containerBoxes, hiddenCategories, maxVisibleLayer, activeStepLimit]);
+    }, [steppedBoxes, hiddenCategories, maxVisibleLayer]);
 
     const selectedPkg = React.useMemo(
       () => containerBoxes.find((p) => p.instanceId === selectedInstanceId) ?? null,
@@ -1067,7 +1075,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
         const edgeMatNormal = new THREE.LineBasicMaterial({ color: '#18181b', transparent: true, opacity: 0.45 });
         const edgeMatSelected = new THREE.LineBasicMaterial({ color: '#ffffff' });
 
-        const maxStep = visibleBoxes.reduce((m, p) => Math.max(m, p.stepIndex), 0);
+        const latestSteppedId =
+          activeStepLimit !== null && steppedBoxes.length > 0
+            ? steppedBoxes[steppedBoxes.length - 1].instanceId
+            : null;
 
         for (const p of visibleBoxes) {
           const sx = Math.max(0.01, p.dx * SCALE - gap);
@@ -1075,7 +1086,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
           const sz = Math.max(0.01, p.dz * SCALE - gap);
 
           const isSelected = p.instanceId === selectedInstanceId;
-          const isActiveStep = activeStepLimit !== null && p.stepIndex === maxStep;
+          const isActiveStep = latestSteppedId !== null && p.instanceId === latestSteppedId;
 
           const geo = new THREE.BoxGeometry(sx, sy, sz);
           const matKey = `${p.color}_${isSelected}_${isActiveStep}`;
@@ -1180,6 +1191,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
       eng.requestRender();
     }, [
       space,
+      steppedBoxes,
       visibleBoxes,
       emptySpaces,
       containerIndex,
@@ -1213,7 +1225,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
     }, [manualMode, manualTool, manualActiveSpec]);
 
     const totalSteps = containerBoxes.length;
-    const currentStep = activeStepLimit ?? totalSteps;
+    const currentStep =
+      activeStepLimit === null ? totalSteps : Math.max(0, Math.min(totalSteps, activeStepLimit));
 
     const triggerPreset = (p: CameraPreset) => {
       setActivePreset(p);
@@ -1478,7 +1491,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
 
               {/* Row 2: Step-by-Step Loading Sequence Scrubber */}
               {totalSteps > 0 && (
-                <div className="flex items-center gap-2 pt-1.5 border-t border-zinc-200">
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2 pt-1.5 border-t border-zinc-200">
                   <button
                     onClick={onTogglePlaySequence}
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold cursor-pointer whitespace-nowrap"
@@ -1501,7 +1514,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                       const val = Number(e.target.value);
                       onStepLimitChange(val >= totalSteps ? null : val);
                     }}
-                    className="flex-1 accent-red-600 h-1.5 cursor-pointer"
+                    className="flex-1 min-w-[90px] accent-red-600 h-1.5 cursor-pointer"
                   />
                   <button
                     onClick={() => {
@@ -1512,7 +1525,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
                   >
                     <SkipForward className="w-3.5 h-3.5" />
                   </button>
-                  <span className="text-[11px] font-mono text-zinc-700 tabular-nums whitespace-nowrap min-w-[68px] text-end">
+                  <span className="text-[11px] font-mono text-zinc-700 tabular-nums whitespace-nowrap min-w-[56px] sm:min-w-[68px] text-end">
                     {currentStep} / {totalSteps}
                   </span>
                 </div>

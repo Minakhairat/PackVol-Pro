@@ -771,7 +771,12 @@ function reorderLoadingSequence(
     if (Math.abs(a.x - b.x) > 10) return a.x - b.x;
     return a.z - b.z;
   });
-  return copy.map((p, i) => ({ ...p, stepIndex: i + 1 }));
+  const stepCounters = new Map<number, number>();
+  return copy.map((p) => {
+    const step = (stepCounters.get(p.containerIndex) ?? 0) + 1;
+    stepCounters.set(p.containerIndex, step);
+    return { ...p, stepIndex: step };
+  });
 }
 
 function computeBalanceScore(cont: ContainerState): { cog: { x: number; y: number; z: number }; score: number } {
