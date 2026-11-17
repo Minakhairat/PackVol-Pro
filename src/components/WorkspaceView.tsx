@@ -387,7 +387,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const imported = await parseImportedPackagesFile(file);
+      const imported = await parseImportedPackagesFile(file, lengthUnit, weightUnit);
       if (imported.length > 0) {
         pushManifestChange([...project.packages, ...imported]);
       }

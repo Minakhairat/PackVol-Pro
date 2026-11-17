@@ -13,6 +13,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -28,11 +29,14 @@ import { t, translateTestName } from '../i18n/translations';
 import { PackageFormModal } from './PackageFormModal';
 import { Views2D } from './Views2D';
 import {
+  downloadProductsExcelTemplate,
   exportProjectBackupJson,
+  exportProjectsListJson,
   exportToCsv,
   exportToExcel,
   exportToPdf,
   parseImportedPackagesFile,
+  parseProjectsBackupJson,
 } from '../utils/exporters';
 import { runAllVerificationTests, TestCaseResult } from '../engine/testSuite';
 
@@ -49,6 +53,7 @@ interface ProjectsViewProps {
   onRenameProject: (id: string, newName: string) => void;
   onDeleteProject: (id: string) => void;
   onImportBackup: (proj: Project) => void;
+  onRestoreProjectsList: (imported: Project[], mode: 'replace' | 'merge') => void;
 }
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
@@ -60,11 +65,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   onRenameProject,
   onDeleteProject,
   onImportBackup,
+  onRestoreProjectsList,
 }) => {
   const { language, lengthUnit, weightUnit } = settings;
   const [search, setSearch] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
+  const [pendingRestore, setPendingRestore] = useState<Project[] | null>(null);
+  const [importNotice, setImportNotice] = useState<{ ok: boolean; msg: string } | null>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
 
   const filtered = projects.filter((p) => {
@@ -82,17 +90,26 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     if (!file) return;
     try {
       const txt = await file.text();
-      const parsed = JSON.parse(txt) as Project;
-      if (parsed && parsed.space && Array.isArray(parsed.packages)) {
+      const parsed = parseProjectsBackupJson(txt);
+      if (parsed.projects.length === 0) {
+        setImportNotice({ ok: false, msg: t(language, 'importInvalidJsonMsg') });
+        return;
+      }
+      if (parsed.isListBackup) {
+        setPendingRestore(parsed.projects);
+        setImportNotice(null);
+      } else {
+        const single = parsed.projects[0];
         onImportBackup({
-          ...parsed,
+          ...single,
           id: `proj-${Date.now()}`,
-          name: `${parsed.name} (Imported)`,
+          name: `${single.name} (Imported)`,
           updatedAt: Date.now(),
         });
+        setImportNotice({ ok: true, msg: t(language, 'importSuccessMsg') });
       }
     } catch {
-      // ignore invalid json
+      setImportNotice({ ok: false, msg: t(language, 'importInvalidJsonMsg') });
     } finally {
       e.target.value = '';
     }
@@ -104,26 +121,36 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         <h1 className="text-xl font-bold text-zinc-900">{t(language, 'projects')}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-zinc-400 absolute start-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t(language, 'searchPlaceholder')}
-              className="pl-8 pr-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
+              className="ps-8 pe-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
             />
           </div>
           <button
+            type="button"
+            disabled={projects.length === 0}
+            onClick={() => exportProjectsListJson(projects)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-45 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>{t(language, 'exportProjectsJson')}</span>
+          </button>
+          <button
+            type="button"
             onClick={() => backupInputRef.current?.click()}
             className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
           >
-            <Upload className="w-3.5 h-3.5" />
-            <span>{t(language, 'importJson')}</span>
+            <Upload className="w-3.5 h-3.5 text-red-600" />
+            <span>{t(language, 'importProjectsJson')}</span>
           </button>
           <input
             ref={backupInputRef}
             type="file"
-            accept=".json"
+            accept=".json,application/json"
             onChange={handleImportJson}
             className="hidden"
           />
@@ -136,6 +163,25 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {importNotice && (
+        <div
+          className={`rounded-lg border px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs font-medium ${
+            importNotice.ok
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-red-50 border-red-200 text-red-700'
+          }`}
+        >
+          <span>{importNotice.msg}</span>
+          <button
+            type="button"
+            onClick={() => setImportNotice(null)}
+            className="p-0.5 rounded hover:bg-black/5 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {filtered.map((proj) => {
@@ -245,6 +291,72 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           );
         })}
       </div>
+
+      {pendingRestore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white border border-zinc-200 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-red-600 text-white">
+              <h3 className="text-sm font-semibold">{t(language, 'restoreModalTitle')}</h3>
+              <button
+                type="button"
+                onClick={() => setPendingRestore(null)}
+                className="p-1 text-red-100 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {pendingRestore.length} {t(language, 'projectsFoundLabel')}
+              </div>
+              <p className="text-xs text-zinc-600">{t(language, 'restoreModalDesc')}</p>
+              <div className="max-h-36 overflow-y-auto rounded-lg border border-zinc-200 divide-y divide-zinc-100 text-xs">
+                {pendingRestore.map((p, idx) => (
+                  <div key={`${p.id}-${idx}`} className="px-3 py-1.5 flex items-center justify-between gap-2">
+                    <span className="font-medium text-zinc-900 truncate">
+                      {language === 'ar' && p.nameAr ? p.nameAr : p.name}
+                    </span>
+                    <span className="text-[11px] font-mono text-zinc-500 shrink-0">
+                      {p.packages.reduce((s, item) => s + item.quantity, 0)} {t(language, 'pkgsShort')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingRestore(null)}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer"
+                >
+                  {t(language, 'cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRestoreProjectsList(pendingRestore, 'merge');
+                    setPendingRestore(null);
+                    setImportNotice({ ok: true, msg: t(language, 'importSuccessMsg') });
+                  }}
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 cursor-pointer"
+                >
+                  {t(language, 'mergeProjectList')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRestoreProjectsList(pendingRestore, 'replace');
+                    setPendingRestore(null);
+                    setImportNotice({ ok: true, msg: t(language, 'importSuccessMsg') });
+                  }}
+                  className="rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
+                >
+                  {t(language, 'replaceProjectList')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -275,23 +387,36 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<PackageSpec | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [importNotice, setImportNotice] = useState<{ ok: boolean; msg: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const q = search.trim().toLowerCase();
   const filtered = library.filter(
     (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku.toLowerCase().includes(search.toLowerCase()) ||
-      p.category.toLowerCase().includes(search.toLowerCase())
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      (p.nameAr && p.nameAr.toLowerCase().includes(q)) ||
+      p.sku.toLowerCase().includes(q) ||
+      p.category.toLowerCase().includes(q) ||
+      (p.categoryAr && p.categoryAr.toLowerCase().includes(q))
   );
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const parsed = await parseImportedPackagesFile(file);
-      parsed.forEach(onSaveProduct);
+      const parsed = await parseImportedPackagesFile(file, lengthUnit, weightUnit);
+      if (parsed.length === 0) {
+        setImportNotice({ ok: false, msg: t(language, 'importPackagesEmpty') });
+      } else {
+        parsed.forEach(onSaveProduct);
+        setImportNotice({
+          ok: true,
+          msg: `${parsed.length} ${t(language, 'importPackagesSuccess')}`,
+        });
+      }
     } catch {
-      // ignore
+      setImportNotice({ ok: false, msg: t(language, 'importPackagesEmpty') });
     } finally {
       e.target.value = '';
     }
@@ -303,20 +428,29 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
         <h1 className="text-xl font-bold text-zinc-900">{t(language, 'library')}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-zinc-400 absolute start-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t(language, 'searchPlaceholder')}
-              className="pl-8 pr-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
+              className="ps-8 pe-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
             />
           </div>
           <button
+            type="button"
+            onClick={() => downloadProductsExcelTemplate(lengthUnit, weightUnit, language)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>{t(language, 'downloadExcelTemplate')}</span>
+          </button>
+          <button
+            type="button"
             onClick={() => fileRef.current?.click()}
             className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
           >
-            <Upload className="w-3.5 h-3.5" />
+            <Upload className="w-3.5 h-3.5 text-red-600" />
             <span>{t(language, 'importCsvExcel')}</span>
           </button>
           <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleImport} className="hidden" />
@@ -332,6 +466,25 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
           </button>
         </div>
       </div>
+
+      {importNotice && (
+        <div
+          className={`rounded-lg border px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs font-medium ${
+            importNotice.ok
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-red-50 border-red-200 text-red-700'
+          }`}
+        >
+          <span>{importNotice.msg}</span>
+          <button
+            type="button"
+            onClick={() => setImportNotice(null)}
+            className="p-0.5 rounded hover:bg-black/5 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       <div className="rounded-xl border border-zinc-200 bg-white overflow-x-auto">
         <table className="w-full text-xs text-start">

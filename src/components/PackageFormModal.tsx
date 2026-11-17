@@ -32,7 +32,9 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
   onSave,
   onClose,
 }) => {
-  const [name, setName] = useState(initial?.name ?? '');
+  const [name, setName] = useState(
+    language === 'ar' && initial?.nameAr ? initial.nameAr : initial?.name ?? ''
+  );
   const [sku, setSku] = useState(initial?.sku ?? `PKG-${Math.floor(100 + Math.random() * 900)}`);
   const [lengthVal, setLengthVal] = useState(
     initial ? String(fromMm(initial.length, lengthUnit)) : String(fromMm(600, lengthUnit))
@@ -48,7 +50,11 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
   );
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 10));
   const [color, setColor] = useState(initial?.color ?? COLOR_SWATCHES[0]);
-  const [category, setCategory] = useState(initial?.category ?? 'General');
+  const [category, setCategory] = useState(
+    language === 'ar' && initial?.categoryAr
+      ? initial.categoryAr
+      : initial?.category ?? (language === 'ar' ? 'عام' : 'General')
+  );
   const [stackable, setStackable] = useState(initial?.stackable ?? true);
   const [rotatable, setRotatable] = useState(initial?.rotatable ?? true);
   const [fragile, setFragile] = useState(initial?.fragile ?? false);
@@ -91,10 +97,13 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
       return;
     }
 
+    const trimmedName = name.trim();
+    const trimmedCategory = category.trim() || (language === 'ar' ? 'عام' : 'General');
+
     onSave({
       id: initial?.id ?? `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      name: name.trim(),
-      nameAr: language === 'ar' ? name.trim() : initial?.nameAr,
+      name: language === 'ar' && initial?.name ? initial.name : trimmedName,
+      nameAr: language === 'ar' ? trimmedName : initial?.nameAr,
       sku: sku.trim(),
       length: lMm,
       width: wMm,
@@ -102,7 +111,8 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
       weight: wKg,
       quantity: qty,
       color,
-      category: category.trim() || (language === 'ar' ? 'عام' : 'General'),
+      category: language === 'ar' && initial?.category ? initial.category : trimmedCategory,
+      categoryAr: language === 'ar' ? trimmedCategory : initial?.categoryAr,
       stackable,
       rotatable,
       fragile,

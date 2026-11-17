@@ -8,7 +8,7 @@ import {
   Project,
   WeightUnit,
 } from '../types/packvol';
-import { formatDims, formatLength, formatVolume, formatWeight, fromKg, fromMm } from './units';
+import { formatDims, formatLength, formatVolume, formatWeight, fromKg, fromMm, toKg, toMm } from './units';
 import { translateStrategyName } from '../i18n/translations';
 
 const PALETTE = ['#dc2626', '#2563eb', '#d97706', '#0d9488', '#ea580c', '#475569', '#059669', '#9333ea'];
@@ -37,64 +37,462 @@ function resolvePkgName(
   return spec?.name || fallbackName;
 }
 
-export async function parseImportedPackagesFile(file: File): Promise<PackageSpec[]> {
+function normalizeNumericString(val: unknown): number {
+  if (typeof val === 'number') return val;
+  const str = String(val ?? '')
+    .trim()
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/٫/g, '.')
+    .replace(/[,،\s]/g, '');
+  if (!str) return NaN;
+  return Number(str);
+}
+
+function detectLengthUnitFromHeader(header: string, fallback: LengthUnit): LengthUnit {
+  const h = header.toLowerCase();
+  if (/\b(cm)\b|\(cm\)|\(سم\)|سم/.test(h)) return 'cm';
+  if (/\b(mm)\b|\(mm\)|\(مم\)|مم/.test(h)) return 'mm';
+  if (/\b(in|inch|inches)\b|\(in\)|بوصة/.test(h)) return 'in';
+  if (/\b(m|meter|meters)\b|\(m\)|\(م\)/.test(h)) return 'm';
+  return fallback;
+}
+
+function detectWeightUnitFromHeader(header: string, fallback: WeightUnit): WeightUnit {
+  const h = header.toLowerCase();
+  if (/\b(lb|lbs)\b|\(lb\)|رطل/.test(h)) return 'lb';
+  if (/\b(kg|kgs)\b|\(kg\)|\(كجم\)|كجم/.test(h)) return 'kg';
+  return fallback;
+}
+
+export function downloadProductsExcelTemplate(
+  lengthUnit: LengthUnit,
+  weightUnit: WeightUnit,
+  language: Language = 'en'
+): void {
+  const isAr = language === 'ar';
+  const wb = XLSX.utils.book_new();
+  if (isAr) {
+    wb.Workbook = { Views: [{ RTL: true }] };
+  }
+
+  const lenEx1 = fromMm(600, lengthUnit);
+  const widEx1 = fromMm(400, lengthUnit);
+  const heiEx1 = fromMm(400, lengthUnit);
+  const wtEx1 = fromKg(18, weightUnit);
+  const maxWtEx1 = fromKg(120, weightUnit);
+
+  const lenEx2 = fromMm(1200, lengthUnit);
+  const widEx2 = fromMm(800, lengthUnit);
+  const heiEx2 = fromMm(950, lengthUnit);
+  const wtEx2 = fromKg(240, weightUnit);
+  const maxWtEx2 = fromKg(0, weightUnit);
+
+  const headers = isAr
+    ? [
+        'رمز المنتج (SKU)',
+        'اسم المنتج (عربي)',
+        'اسم المنتج (إنجليزي)',
+        'الفئة (عربي)',
+        'الفئة (إنجليزي)',
+        `الطول (${lengthUnit})`,
+        `العرض (${lengthUnit})`,
+        `الارتفاع (${lengthUnit})`,
+        `الوزن (${weightUnit})`,
+        'الكمية',
+        'قابل للتكديس (نعم/لا)',
+        'قابل للتدوير (نعم/لا)',
+        'قابل للكسر (نعم/لا)',
+        'هذا الجانب للأعلى (نعم/لا)',
+        `أقصى وزن للتكديس (${weightUnit})`,
+        'أقصى عدد طبقات',
+        'الأولوية (1-10)',
+        'اللون (Hex)',
+      ]
+    : [
+        'SKU',
+        'Product Name (English)',
+        'Product Name (Arabic)',
+        'Category (English)',
+        'Category (Arabic)',
+        `Length (${lengthUnit})`,
+        `Width (${lengthUnit})`,
+        `Height (${lengthUnit})`,
+        `Weight (${weightUnit})`,
+        'Quantity',
+        'Stackable (Yes/No)',
+        'Rotatable (Yes/No)',
+        'Fragile (Yes/No)',
+        'This Side Up (Yes/No)',
+        `Max Stack Weight (${weightUnit})`,
+        'Max Stack Layers',
+        'Priority (1-10)',
+        'Color (Hex)',
+      ];
+
+  const yesWord = isAr ? 'نعم' : 'Yes';
+  const noWord = isAr ? 'لا' : 'No';
+
+  const sampleRows = isAr
+    ? [
+        [
+          'ELC-101',
+          'كرتونة أجهزة إلكترونية',
+          'Electronics Master Carton',
+          'إلكترونيات',
+          'Electronics',
+          lenEx1,
+          widEx1,
+          heiEx1,
+          wtEx1,
+          10,
+          yesWord,
+          yesWord,
+          noWord,
+          yesWord,
+          maxWtEx1,
+          4,
+          7,
+          '#dc2626',
+        ],
+        [
+          'PLT-202',
+          'طبلية بضائع صناعية',
+          'Industrial Pallet Cargo',
+          'صناعي',
+          'Industrial',
+          lenEx2,
+          widEx2,
+          heiEx2,
+          wtEx2,
+          4,
+          noWord,
+          noWord,
+          noWord,
+          yesWord,
+          maxWtEx2,
+          1,
+          9,
+          '#2563eb',
+        ],
+      ]
+    : [
+        [
+          'ELC-101',
+          'Electronics Master Carton',
+          'كرتونة أجهزة إلكترونية',
+          'Electronics',
+          'إلكترونيات',
+          lenEx1,
+          widEx1,
+          heiEx1,
+          wtEx1,
+          10,
+          yesWord,
+          yesWord,
+          noWord,
+          yesWord,
+          maxWtEx1,
+          4,
+          7,
+          '#dc2626',
+        ],
+        [
+          'PLT-202',
+          'Industrial Pallet Cargo',
+          'طبلية بضائع صناعية',
+          'Industrial',
+          'صناعي',
+          lenEx2,
+          widEx2,
+          heiEx2,
+          wtEx2,
+          4,
+          noWord,
+          noWord,
+          noWord,
+          yesWord,
+          maxWtEx2,
+          1,
+          9,
+          '#2563eb',
+        ],
+      ];
+
+  const wsTemplate = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
+  wsTemplate['!cols'] = headers.map((h) => ({ wch: Math.max(16, h.length + 5) }));
+  XLSX.utils.book_append_sheet(
+    wb,
+    wsTemplate,
+    isAr ? 'نموذج المنتجات' : 'Products Template'
+  );
+
+  const guideRows = isAr
+    ? [
+        ['العمود', 'الوصف والتعليمات', 'مثال'],
+        ['رمز المنتج (SKU)', 'كود تعريفي فريد للمنتج (إلزامي أو يُولّد تلقائياً)', 'ELC-101'],
+        ['اسم المنتج (عربي)', 'الاسم الظاهر في الواجهة العربية والتقارير العربية', 'كرتونة أجهزة إلكترونية'],
+        ['اسم المنتج (إنجليزي)', 'الاسم الظاهر في الواجهة الإنجليزية (اختياري إذا كُتب العربي)', 'Electronics Master Carton'],
+        ['الفئة (عربي / إنجليزي)', 'تصنيف المنتج لتسهيل الفرز والبحث', 'إلكترونيات / Electronics'],
+        [`الطول / العرض / الارتفاع (${lengthUnit})`, `أبعاد العبوة بوحدة (${lengthUnit}) ويجب أن تكون أكبر من صفر`, `${lenEx1}`],
+        [`الوزن (${weightUnit})`, `وزن العبوة الواحدة بوحدة (${weightUnit})`, `${wtEx1}`],
+        ['الكمية', 'العدد الافتراضي عند إضافة المنتج للمشروع (1 على الأقل)', '10'],
+        ['الحقول المنطقية (نعم/لا)', 'يدعم البرنامج: نعم / لا أو Yes / No أو 1 / 0', 'نعم'],
+        ['أقصى وزن / طبقات التكديس', 'القيمة 0 تعني بلا حد أقصى للتكديس', '0'],
+        ['الأولوية (1-10)', 'أولوية التحميل (10 هي الأعلى أولوية)', '7'],
+        ['اللون (Hex)', 'كود لون اختياري لتمييز العبوة في العرض ثلاثي الأبعاد', '#dc2626'],
+      ]
+    : [
+        ['Column', 'Instructions', 'Example'],
+        ['SKU', 'Unique product code (auto-generated if omitted)', 'ELC-101'],
+        ['Product Name (English / Arabic)', 'Fill either or both for full bilingual UI & PDF reports', 'Electronics Master Carton'],
+        ['Category (English / Arabic)', 'Product group for search & filtering', 'Electronics'],
+        [`Length / Width / Height (${lengthUnit})`, `Package dimensions in ${lengthUnit} (must be > 0)`, `${lenEx1}`],
+        [`Weight (${weightUnit})`, `Single unit gross weight in ${weightUnit}`, `${wtEx1}`],
+        ['Quantity', 'Default manifest quantity (>= 1)', '10'],
+        ['Boolean Rules (Yes/No)', 'Supports Yes/No, نعم/لا, True/False, or 1/0', 'Yes'],
+        ['Max Stack Weight / Layers', 'Use 0 for unlimited stacking', '0'],
+        ['Priority (1-10)', 'Loading priority (10 = highest)', '7'],
+        ['Color (Hex)', 'Optional hex color for 3D rendering', '#dc2626'],
+      ];
+
+  const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
+  wsGuide['!cols'] = [{ wch: 30 }, { wch: 52 }, { wch: 24 }];
+  XLSX.utils.book_append_sheet(
+    wb,
+    wsGuide,
+    isAr ? 'تعليمات التعبئة' : 'Instructions'
+  );
+
+  XLSX.writeFile(
+    wb,
+    `PackVolPro_Products_Template_${isAr ? 'AR' : 'EN'}.xlsx`
+  );
+}
+
+export async function parseImportedPackagesFile(
+  file: File,
+  defaultLengthUnit: LengthUnit = 'mm',
+  defaultWeightUnit: WeightUnit = 'kg'
+): Promise<PackageSpec[]> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
-  const pick = (row: Record<string, unknown>, keys: string[], fallback: unknown = '') => {
-    for (const k of Object.keys(row)) {
-      const norm = k.trim().toLowerCase();
-      if (keys.some((target) => norm.includes(target))) {
-        return row[k];
+  const findColumn = (
+    row: Record<string, unknown>,
+    keys: string[],
+    exclude: string[] = []
+  ): { header: string; value: unknown } | null => {
+    const entries = Object.keys(row);
+    for (const target of keys) {
+      for (const k of entries) {
+        const norm = k.trim().toLowerCase();
+        if (exclude.some((ex) => norm.includes(ex))) continue;
+        if (norm === target || norm.includes(target)) {
+          return { header: k, value: row[k] };
+        }
       }
     }
-    return fallback;
+    return null;
   };
 
   const boolVal = (val: unknown, def: boolean): boolean => {
     if (typeof val === 'boolean') return val;
-    const s = String(val).trim().toLowerCase();
+    const s = String(val ?? '').trim().toLowerCase();
     if (!s) return def;
-    return ['true', 'yes', '1', 'y', 'نعم'].includes(s);
+    if (['false', 'no', '0', 'n', 'لا', 'خطأ', 'غير ممكن'].includes(s)) return false;
+    return ['true', 'yes', '1', 'y', 'نعم', 'صح', 'ممكن', '✓'].includes(s);
   };
 
+  const hasArabicChars = (text: string) => /[\u0600-\u06FF]/.test(text);
+
   const specs: PackageSpec[] = [];
+  const baseTs = Date.now();
+
   rows.forEach((row, idx) => {
-    const name = String(pick(row, ['name', 'product', 'الاسم', 'المنتج'], `Imported Package ${idx + 1}`)).trim();
-    const sku = String(pick(row, ['sku', 'code', 'رمز'], `IMP-${100 + idx}`)).trim();
-    const length = Math.max(10, Number(pick(row, ['length', 'len', 'طول'], 600)) || 600);
-    const width = Math.max(10, Number(pick(row, ['width', 'wid', 'عرض'], 400)) || 400);
-    const height = Math.max(10, Number(pick(row, ['height', 'hei', 'ارتفاع'], 400)) || 400);
-    const weight = Math.max(0.1, Number(pick(row, ['weight', 'wt', 'وزن'], 15)) || 15);
-    const quantity = Math.max(1, Math.floor(Number(pick(row, ['qty', 'quantity', 'الكمية'], 1)) || 1));
-    const category = String(pick(row, ['category', 'cat', 'فئة'], 'General')).trim() || 'General';
-    const stackable = boolVal(pick(row, ['stackable', 'تكديس'], true), true);
-    const rotatable = boolVal(pick(row, ['rotatable', 'تدوير'], true), true);
-    const fragile = boolVal(pick(row, ['fragile', 'كسر'], false), false);
-    const thisSideUp = boolVal(pick(row, ['this side up', 'upright', 'أعلى'], false), false);
+    const hasAnyValue = Object.values(row).some((v) => String(v ?? '').trim() !== '');
+    if (!hasAnyValue) return;
+
+    const rawNameAr = String(
+      findColumn(row, [
+        'اسم المنتج (عربي)',
+        'الاسم العربي',
+        'اسم عربي',
+        'namear',
+        'name (arabic)',
+        'product name (arabic)',
+        'arabic name',
+      ])?.value ?? ''
+    ).trim();
+
+    const rawNameEn = String(
+      findColumn(
+        row,
+        [
+          'اسم المنتج (إنجليزي)',
+          'الاسم الإنجليزي',
+          'product name (english)',
+          'name (english)',
+          'english name',
+          'product name',
+          'product',
+          'name',
+        ],
+        ['arabic', 'عربي', 'namear']
+      )?.value ?? ''
+    ).trim();
+
+    const rawNameGeneric = String(
+      findColumn(
+        row,
+        ['اسم المنتج', 'الاسم', 'المنتج'],
+        ['إنجليزي', 'english', 'عربي', 'arabic']
+      )?.value ?? ''
+    ).trim();
+
+    const nameAr =
+      rawNameAr || (hasArabicChars(rawNameGeneric) ? rawNameGeneric : hasArabicChars(rawNameEn) ? rawNameEn : undefined);
+    const name =
+      rawNameEn ||
+      rawNameGeneric ||
+      rawNameAr ||
+      `Imported Package ${idx + 1}`;
+
+    const sku =
+      String(
+        findColumn(row, ['رمز المنتج', 'sku', 'كود', 'رمز', 'code'])?.value ?? ''
+      ).trim() || `IMP-${100 + idx}`;
+
+    const lenMatch = findColumn(row, ['الطول', 'length', 'len', 'طول']);
+    const widMatch = findColumn(row, ['العرض', 'width', 'wid', 'عرض']);
+    const heiMatch = findColumn(row, ['الارتفاع', 'height', 'hei', 'ارتفاع']);
+    const wtMatch = findColumn(
+      row,
+      ['الوزن', 'weight', 'wt', 'وزن'],
+      ['تكديس', 'stack', 'أقصى', 'max']
+    );
+    const maxWtMatch = findColumn(row, [
+      'أقصى وزن للتكديس',
+      'وزن التكديس',
+      'maxstackweight',
+      'max stack weight',
+      'stackweight',
+    ]);
+
+    const lenNum = normalizeNumericString(lenMatch?.value);
+    const widNum = normalizeNumericString(widMatch?.value);
+    const heiNum = normalizeNumericString(heiMatch?.value);
+    const wtNum = normalizeNumericString(wtMatch?.value);
+    const maxWtNum = normalizeNumericString(maxWtMatch?.value);
+
+    const lenUnit = lenMatch ? detectLengthUnitFromHeader(lenMatch.header, defaultLengthUnit) : defaultLengthUnit;
+    const widUnit = widMatch ? detectLengthUnitFromHeader(widMatch.header, defaultLengthUnit) : defaultLengthUnit;
+    const heiUnit = heiMatch ? detectLengthUnitFromHeader(heiMatch.header, defaultLengthUnit) : defaultLengthUnit;
+    const wtUnit = wtMatch ? detectWeightUnitFromHeader(wtMatch.header, defaultWeightUnit) : defaultWeightUnit;
+    const maxWtUnit = maxWtMatch ? detectWeightUnitFromHeader(maxWtMatch.header, wtUnit) : wtUnit;
+
+    const length = Number.isFinite(lenNum) && lenNum > 0 ? Math.max(10, toMm(lenNum, lenUnit)) : 600;
+    const width = Number.isFinite(widNum) && widNum > 0 ? Math.max(10, toMm(widNum, widUnit)) : 400;
+    const height = Number.isFinite(heiNum) && heiNum > 0 ? Math.max(10, toMm(heiNum, heiUnit)) : 400;
+    const weight = Number.isFinite(wtNum) && wtNum > 0 ? Math.max(0.1, toKg(wtNum, wtUnit)) : 15;
+    const maxStackWeight =
+      Number.isFinite(maxWtNum) && maxWtNum > 0 ? toKg(maxWtNum, maxWtUnit) : 0;
+
+    const qtyNum = normalizeNumericString(
+      findColumn(row, ['الكمية', 'كمية', 'quantity', 'qty'])?.value
+    );
+    const quantity = Number.isFinite(qtyNum) && qtyNum >= 1 ? Math.floor(qtyNum) : 1;
+
+    const rawCatAr = String(
+      findColumn(row, [
+        'الفئة (عربي)',
+        'التصنيف (عربي)',
+        'categoryar',
+        'category (arabic)',
+        'arabic category',
+      ])?.value ?? ''
+    ).trim();
+    const rawCatEn = String(
+      findColumn(
+        row,
+        ['الفئة (إنجليزي)', 'category (english)', 'english category', 'category', 'cat'],
+        ['arabic', 'عربي', 'categoryar']
+      )?.value ?? ''
+    ).trim();
+    const rawCatGeneric = String(
+      findColumn(
+        row,
+        ['الفئة', 'التصنيف', 'فئة'],
+        ['إنجليزي', 'english', 'عربي', 'arabic']
+      )?.value ?? ''
+    ).trim();
+
+    const categoryAr =
+      rawCatAr || (hasArabicChars(rawCatGeneric) ? rawCatGeneric : hasArabicChars(rawCatEn) ? rawCatEn : undefined);
+    const category = rawCatEn || rawCatGeneric || rawCatAr || 'General';
+
+    const stackable = boolVal(
+      findColumn(
+        row,
+        ['قابل للتكديس', 'stackable', 'تكديس'],
+        ['وزن', 'weight', 'طبقات', 'layers']
+      )?.value,
+      true
+    );
+    const rotatable = boolVal(
+      findColumn(row, ['قابل للتدوير', 'rotatable', 'تدوير'])?.value,
+      true
+    );
+    const fragile = boolVal(
+      findColumn(row, ['قابل للكسر', 'fragile', 'كسر', 'هش'])?.value,
+      false
+    );
+    const thisSideUp = boolVal(
+      findColumn(row, ['هذا الجانب للأعلى', 'this side up', 'upright', 'للأعلى', 'للاعلى', 'أعلى'])?.value,
+      false
+    );
+
+    const layersNum = normalizeNumericString(
+      findColumn(row, ['أقصى عدد طبقات', 'عدد الطبقات', 'maxstacklayers', 'layers'])?.value
+    );
+    const maxStackLayers =
+      Number.isFinite(layersNum) && layersNum > 0 ? Math.floor(layersNum) : 0;
+
+    const prioNum = normalizeNumericString(
+      findColumn(row, ['الأولوية', 'أولوية', 'priority'])?.value
+    );
+    const priority =
+      Number.isFinite(prioNum) ? Math.min(10, Math.max(1, Math.round(prioNum))) : 5;
+
+    const rawColor = String(
+      findColumn(row, ['اللون', 'لون', 'color', 'hex'])?.value ?? ''
+    ).trim();
+    const color = /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : PALETTE[idx % PALETTE.length];
 
     specs.push({
-      id: `imp-${Date.now()}-${idx}`,
+      id: `imp-${baseTs}-${idx}`,
       name,
+      nameAr,
       sku,
       length,
       width,
       height,
       weight,
       quantity,
-      color: PALETTE[idx % PALETTE.length],
+      color,
       category,
+      categoryAr,
       stackable,
       rotatable,
       fragile,
       thisSideUp,
-      maxStackWeight: Number(pick(row, ['maxstackweight', 'stackweight'], 0)) || 0,
-      maxStackLayers: Number(pick(row, ['maxstacklayers', 'layers'], 0)) || 0,
+      maxStackWeight,
+      maxStackLayers,
       allowedAxes: { x: !thisSideUp, y: true, z: !thisSideUp },
-      priority: Math.min(10, Math.max(1, Number(pick(row, ['priority', 'أولوية'], 5)) || 5)),
+      priority,
     });
   });
 
@@ -910,4 +1308,68 @@ export function exportProjectBackupJson(project: Project): void {
   a.download = `PackVolPro_Backup_${safeFilePart(project.name)}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export function exportProjectsListJson(projects: Project[]): void {
+  const payload = {
+    format: 'packvol-projects-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    projects,
+  };
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `PackVolPro_Projects_${dateStamp}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function isValidProjectLike(item: unknown): item is Project {
+  if (!item || typeof item !== 'object') return false;
+  const candidate = item as Partial<Project>;
+  return Boolean(
+    candidate.space &&
+      typeof candidate.space === 'object' &&
+      typeof candidate.space.internalLength === 'number' &&
+      typeof candidate.space.internalWidth === 'number' &&
+      typeof candidate.space.internalHeight === 'number' &&
+      Array.isArray(candidate.packages)
+  );
+}
+
+export function parseProjectsBackupJson(rawText: string): {
+  projects: Project[];
+  isListBackup: boolean;
+} {
+  const parsed: unknown = JSON.parse(rawText);
+  const now = Date.now();
+
+  const normalize = (p: Project, idx: number): Project => ({
+    ...p,
+    id: typeof p.id === 'string' && p.id.trim() ? p.id : `proj-imp-${now}-${idx}`,
+    name: typeof p.name === 'string' && p.name.trim() ? p.name : `Imported Project ${idx + 1}`,
+    createdAt: typeof p.createdAt === 'number' ? p.createdAt : now,
+    updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : now,
+  });
+
+  if (Array.isArray(parsed)) {
+    const valid = parsed.filter(isValidProjectLike).map(normalize);
+    return { projects: valid, isListBackup: true };
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    const wrapper = parsed as { projects?: unknown };
+    if (Array.isArray(wrapper.projects)) {
+      const valid = wrapper.projects.filter(isValidProjectLike).map(normalize);
+      return { projects: valid, isListBackup: true };
+    }
+    if (isValidProjectLike(parsed)) {
+      return { projects: [normalize(parsed, 0)], isListBackup: false };
+    }
+  }
+
+  return { projects: [], isListBackup: false };
 }

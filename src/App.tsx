@@ -6,6 +6,7 @@ import {
   History,
   LayoutDashboard,
   Package,
+  Phone,
   Settings as SettingsIcon,
   Globe,
 } from 'lucide-react';
@@ -24,7 +25,9 @@ import {
   deleteLibraryProductFromDb,
   deleteProjectFromDb,
   initializeStorage,
+  replaceAllProjectsInDb,
   saveLibraryProductToDb,
+  saveManyProjectsToDb,
   saveProjectToDb,
   saveSettingsToDb,
 } from './db/storage';
@@ -215,6 +218,35 @@ export default function App() {
     handleUpdateProject({ ...target, name: newName, updatedAt: Date.now() });
   };
 
+  const handleRestoreProjectsList = (imported: Project[], mode: 'replace' | 'merge') => {
+    const now = Date.now();
+    if (mode === 'replace') {
+      const seenIds = new Set<string>();
+      const normalized = imported.map((p, idx) => {
+        const uniqueId = !p.id || seenIds.has(p.id) ? `proj-rest-${now}-${idx}` : p.id;
+        seenIds.add(uniqueId);
+        return { ...p, id: uniqueId };
+      });
+      setProjects(normalized);
+      setActiveProjectId(normalized[0]?.id ?? null);
+      void replaceAllProjectsInDb(normalized);
+    } else {
+      const existingIds = new Set(projects.map((p) => p.id));
+      const added = imported.map((p, idx) => {
+        const uniqueId =
+          !p.id || existingIds.has(p.id) ? `proj-imp-${now}-${idx}` : p.id;
+        existingIds.add(uniqueId);
+        return { ...p, id: uniqueId };
+      });
+      const nextList = [...added, ...projects];
+      setProjects(nextList);
+      if (!activeProjectId && nextList.length > 0) {
+        setActiveProjectId(nextList[0].id);
+      }
+      void saveManyProjectsToDb(added);
+    }
+  };
+
   const confirmDelete = () => {
     if (!pendingDelete) return;
     if (pendingDelete.type === 'project') {
@@ -344,6 +376,23 @@ export default function App() {
           </div>
 
           <PWAInstallButton language={settings.language} />
+
+          <div
+            dir="rtl"
+            className="pt-2.5 border-t border-zinc-200 text-center space-y-1 text-[11px] leading-snug"
+          >
+            <div className="font-semibold text-zinc-700">
+              الملكية الفكرية للمهندس مينا خيرت
+            </div>
+            <a
+              href="tel:01200224513"
+              dir="ltr"
+              className="inline-flex items-center justify-center gap-1 font-mono font-semibold text-red-600 hover:text-red-700"
+            >
+              <Phone className="w-3 h-3" />
+              <span>01200224513</span>
+            </a>
+          </div>
         </div>
       </aside>
 
@@ -431,6 +480,7 @@ export default function App() {
               setProjects((prev) => [proj, ...prev]);
               saveProjectToDb(proj);
             }}
+            onRestoreProjectsList={handleRestoreProjectsList}
           />
         )}
 
@@ -473,6 +523,23 @@ export default function App() {
         {activeTab === 'settings' && (
           <SettingsView settings={settings} onUpdateSettings={updateSettings} />
         )}
+
+        <footer
+          dir="rtl"
+          className="md:hidden mt-8 pt-4 border-t border-zinc-200 text-center space-y-1 text-xs no-print"
+        >
+          <div className="font-semibold text-zinc-700">
+            الملكية الفكرية للمهندس مينا خيرت
+          </div>
+          <a
+            href="tel:01200224513"
+            dir="ltr"
+            className="inline-flex items-center justify-center gap-1 font-mono font-semibold text-red-600 hover:text-red-700"
+          >
+            <Phone className="w-3.5 h-3.5" />
+            <span>01200224513</span>
+          </a>
+        </footer>
       </main>
 
       {/* Mobile Bottom Navigation Bar (5 thumb-friendly tabs, <= 56px) */}

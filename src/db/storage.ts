@@ -114,6 +114,25 @@ export async function saveProjectToDb(project: Project): Promise<void> {
   await db.put('projects', project);
 }
 
+export async function saveManyProjectsToDb(projects: Project[]): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction('projects', 'readwrite');
+  for (const p of projects) {
+    await tx.store.put(p);
+  }
+  await tx.done;
+}
+
+export async function replaceAllProjectsInDb(projects: Project[]): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction('projects', 'readwrite');
+  await tx.store.clear();
+  for (const p of projects) {
+    await tx.store.put(p);
+  }
+  await tx.done;
+}
+
 export async function deleteProjectFromDb(projectId: string): Promise<void> {
   const db = await getDb();
   await db.delete('projects', projectId);
