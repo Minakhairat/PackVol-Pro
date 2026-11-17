@@ -7,9 +7,14 @@ import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1];
-  const base =
+  const isUserOrOrgPage = repoName?.toLowerCase().endsWith('.github.io');
+  const rawBase =
     process.env.VITE_BASE_PATH ||
-    (process.env.GITHUB_ACTIONS === 'true' && repoName ? `/${repoName}/` : '/');
+    (process.env.GITHUB_ACTIONS === 'true' && repoName && !isUserOrOrgPage
+      ? `/${repoName}/`
+      : '/');
+  const trimmedBase = rawBase.replace(/\/+$/, '');
+  const base = trimmedBase ? `${trimmedBase}/` : '/';
 
   return {
     base,
