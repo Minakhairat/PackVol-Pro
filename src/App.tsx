@@ -1,0 +1,523 @@
+import { useEffect, useRef, useState } from 'react';
+import {
+  BarChart3,
+  Box,
+  FolderKanban,
+  History,
+  LayoutDashboard,
+  Package,
+  Settings as SettingsIcon,
+  Globe,
+} from 'lucide-react';
+import {
+  AppSettings,
+  HistoryEntry,
+  LengthUnit,
+  PackageSpec,
+  Project,
+  SpaceCategory,
+} from './types/packvol';
+import {
+  addHistoryEntryToDb,
+  clearHistoryFromDb,
+  DEFAULT_SETTINGS,
+  deleteLibraryProductFromDb,
+  deleteProjectFromDb,
+  initializeStorage,
+  saveLibraryProductToDb,
+  saveProjectToDb,
+  saveSettingsToDb,
+} from './db/storage';
+import { SPACE_TEMPLATES } from './data/presets';
+import { runOptimization } from './engine/packer';
+import { t } from './i18n/translations';
+import { DashboardView } from './components/DashboardView';
+import { WorkspaceView } from './components/WorkspaceView';
+import {
+  HistoryView,
+  ProductLibraryView,
+  ProjectsView,
+  ReportsView,
+  SettingsView,
+} from './components/ProjectsAndLibraryViews';
+import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
+
+type NavTab =
+  | 'dashboard'
+  | 'workspace'
+  | 'projects'
+  | 'library'
+  | 'history'
+  | 'reports'
+  | 'settings';
+
+export default function App() {
+  const [ready, setReady] = useState(false);
+  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [library, setLibrary] = useState<PackageSpec[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+
+  const [pendingDelete, setPendingDelete] = useState<{
+    type: 'project' | 'product';
+    id: string;
+    label: string;
+  } | null>(null);
+
+  // Initialize IndexedDB & solve initial sample project so real KPIs are populated
+  useEffect(() => {
+    let mounted = true;
+    initializeStorage().then(async (data) => {
+      if (!mounted) return;
+      const updatedProjects = [...data.projects];
+      // Compute genuine optimization for the primary sample project on first launch
+      if (updatedProjects.length > 0 && !updatedProjects[0].lastResult) {
+        const p0 = updatedProjects[0];
+        const res = runOptimization({
+          space: p0.space,
+          packages: p0.packages,
+          mode: p0.mode,
+          allowRotation: p0.allowRotation,
+          loadingDirection: p0.loadingDirection,
+        });
+        updatedProjects[0] = { ...p0, lastResult: res };
+        await saveProjectToDb(updatedProjects[0]);
+      }
+
+      if (!mounted) return;
+      setProjects(updatedProjects);
+      setActiveProjectId(updatedProjects[0]?.id ?? null);
+      setLibrary(data.library);
+      setHistory(data.history);
+      setSettings(data.settings);
+      setReady(true);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Sync HTML dir and lang for English (LTR) / Arabic (RTL)
+  useEffect(() => {
+    const html = document.documentElement;
+    html.lang = settings.language;
+    html.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
+  }, [settings.language]);
+
+  const projectsRef = useRef<Project[]>([]);
+  projectsRef.current = projects;
+
+  const activeProject =
+    projects.find((p) => p.id === activeProjectId) ?? projects[0] ?? null;
+
+  const updateSettings = (next: AppSettings) => {
+    setSettings(next);
+    saveSettingsToDb(next);
+  };
+
+  const handleUpdateProject = (
+    updatedOrUpdater: Project | ((prev: Project) => Project),
+    recordHistory = false
+  ) => {
+    const currentList = projectsRef.current;
+    const targetId =
+      typeof updatedOrUpdater === 'function'
+        ? activeProject?.id ?? currentList[0]?.id
+        : updatedOrUpdater.id;
+    const current = currentList.find((p) => p.id === targetId);
+    if (!current) return;
+
+    const updated =
+      typeof updatedOrUpdater === 'function' ? updatedOrUpdater(current) : updatedOrUpdater;
+
+    const nextList = currentList.map((p) => (p.id === updated.id ? updated : p));
+    projectsRef.current = nextList;
+    setProjects(nextList);
+    saveProjectToDb(updated);
+
+    if (recordHistory && updated.lastResult) {
+      const res = updated.lastResult;
+      const entry: HistoryEntry = {
+        id: `hist-${Date.now()}`,
+        projectId: updated.id,
+        projectName:
+          settings.language === 'ar' && updated.nameAr ? updated.nameAr : updated.name,
+        spaceName:
+          settings.language === 'ar' && updated.space.nameAr
+            ? updated.space.nameAr
+            : updated.space.name,
+        mode: res.mode,
+        loadedCount: res.loadedPackagesCount,
+        totalCount: res.totalRequiredPackages,
+        volumeUtilizationPct: res.volumeUtilizationPct,
+        totalWeightKg: res.totalCargoWeightKg,
+        containersUsed: res.containersUsed,
+        isValid: res.verification.isValid,
+        timestamp: res.timestamp,
+      };
+      setHistory((prev) => [entry, ...prev]);
+      addHistoryEntryToDb(entry);
+    }
+  };
+
+  const handleCreateFromCategory = (category: SpaceCategory) => {
+    const tpl = SPACE_TEMPLATES.find((s) => s.category === category) ?? SPACE_TEMPLATES[0];
+    const newProj: Project = {
+      id: `proj-${Date.now()}`,
+      name: `${tpl.name} Plan`,
+      nameAr: `خطة تحميل — ${tpl.nameAr ?? tpl.name}`,
+      description: `Created from ${tpl.name}`,
+      descriptionAr: `تم الإنشاء من قالب ${tpl.nameAr ?? tpl.name}`,
+      space: { ...tpl },
+      packages: library.slice(0, 2).map((p, i) => ({
+        ...p,
+        id: `pkg-${Date.now()}-${i}`,
+        quantity: i === 0 ? 8 : 16,
+      })),
+      mode: 'balanced',
+      allowRotation: true,
+      loadingDirection: tpl.loadingDirection,
+      lastResult: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setProjects((prev) => [newProj, ...prev]);
+    saveProjectToDb(newProj);
+    setActiveProjectId(newProj.id);
+    setActiveTab('workspace');
+  };
+
+  const handleOpenProject = (id: string) => {
+    setActiveProjectId(id);
+    setActiveTab('workspace');
+  };
+
+  const handleDuplicateProject = (id: string) => {
+    const src = projects.find((p) => p.id === id);
+    if (!src) return;
+    const copy: Project = {
+      ...src,
+      id: `proj-${Date.now()}`,
+      name: `${src.name} (Copy)`,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setProjects((prev) => [copy, ...prev]);
+    saveProjectToDb(copy);
+  };
+
+  const handleRenameProject = (id: string, newName: string) => {
+    const target = projects.find((p) => p.id === id);
+    if (!target) return;
+    handleUpdateProject({ ...target, name: newName, updatedAt: Date.now() });
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.type === 'project') {
+      const next = projects.filter((p) => p.id !== pendingDelete.id);
+      setProjects(next);
+      deleteProjectFromDb(pendingDelete.id);
+      if (activeProjectId === pendingDelete.id) {
+        setActiveProjectId(next[0]?.id ?? null);
+      }
+    } else {
+      setLibrary((prev) => prev.filter((p) => p.id !== pendingDelete.id));
+      deleteLibraryProductFromDb(pendingDelete.id);
+    }
+    setPendingDelete(null);
+  };
+
+  const handleSaveLibraryProduct = (prod: PackageSpec) => {
+    setLibrary((prev) => {
+      const exists = prev.some((p) => p.id === prod.id);
+      return exists ? prev.map((p) => (p.id === prod.id ? prod : p)) : [prod, ...prev];
+    });
+    saveLibraryProductToDb(prod);
+  };
+
+  const handleAddLibraryProductToActive = (prod: PackageSpec) => {
+    if (!activeProject) {
+      handleCreateFromCategory('container');
+      return;
+    }
+    const copy: PackageSpec = {
+      ...prod,
+      id: `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+    };
+    handleUpdateProject({
+      ...activeProject,
+      packages: [...activeProject.packages, copy],
+      updatedAt: Date.now(),
+    });
+    setActiveTab('workspace');
+  };
+
+  const navItems: { id: NavTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'dashboard', label: t(settings.language, 'dashboard'), icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: 'workspace', label: t(settings.language, 'workspace'), icon: <Box className="w-4 h-4" /> },
+    { id: 'projects', label: t(settings.language, 'projects'), icon: <FolderKanban className="w-4 h-4" /> },
+    { id: 'library', label: t(settings.language, 'library'), icon: <Package className="w-4 h-4" /> },
+    { id: 'history', label: t(settings.language, 'history'), icon: <History className="w-4 h-4" /> },
+    { id: 'reports', label: t(settings.language, 'reports'), icon: <BarChart3 className="w-4 h-4" /> },
+    { id: 'settings', label: t(settings.language, 'settings'), icon: <SettingsIcon className="w-4 h-4" /> },
+  ];
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-100 text-zinc-800">
+        <div className="text-center space-y-2">
+          <div className="text-lg font-bold tracking-tight">{t(settings.language, 'appName')}</div>
+          <div className="text-xs text-zinc-500">{t(settings.language, 'loadingApp')}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row bg-zinc-100 text-zinc-900">
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex md:w-60 lg:w-64 md:flex-col md:fixed md:inset-y-0 bg-zinc-900 text-zinc-100 border-e border-zinc-800 z-30 no-print">
+        <div className="h-14 px-5 flex items-center justify-between border-b border-zinc-800">
+          <span className="text-base font-bold tracking-tight text-white whitespace-nowrap">
+            {t(settings.language, 'appName')}
+          </span>
+        </div>
+
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {navItems.map((item) => {
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'bg-orange-600 text-white font-semibold'
+                    : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                }`}
+              >
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Sidebar Bottom Controls: Unit Switcher, Language Switcher, PWA Install */}
+        <div className="p-3 border-t border-zinc-800 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <select
+              aria-label="Measurement Unit"
+              value={settings.lengthUnit}
+              onChange={(e) =>
+                updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
+              }
+              className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-xs font-mono text-zinc-100"
+            >
+              <option value="mm">mm</option>
+              <option value="cm">cm</option>
+              <option value="m">m</option>
+              <option value="in">in</option>
+            </select>
+
+            <button
+              onClick={() =>
+                updateSettings({
+                  ...settings,
+                  language: settings.language === 'en' ? 'ar' : 'en',
+                })
+              }
+              className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 cursor-pointer"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{settings.language === 'en' ? 'AR' : 'EN'}</span>
+            </button>
+          </div>
+
+          <PWAInstallButton language={settings.language} />
+        </div>
+      </aside>
+
+      {/* Mobile Compact Header (<56px) */}
+      <header className="md:hidden sticky top-0 z-30 h-13 bg-zinc-900 text-white px-4 flex items-center justify-between border-b border-zinc-800 no-print">
+        <span className="text-sm font-bold tracking-tight whitespace-nowrap">
+          {t(settings.language, 'appName')}
+        </span>
+        <div className="flex items-center gap-2">
+          <select
+            value={settings.lengthUnit}
+            onChange={(e) =>
+              updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
+            }
+            className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs font-mono text-white"
+          >
+            <option value="mm">mm</option>
+            <option value="cm">cm</option>
+            <option value="m">m</option>
+            <option value="in">in</option>
+          </select>
+          <button
+            onClick={() =>
+              updateSettings({
+                ...settings,
+                language: settings.language === 'en' ? 'ar' : 'en',
+              })
+            }
+            className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs font-medium text-white"
+          >
+            {settings.language === 'en' ? 'AR' : 'EN'}
+          </button>
+          <PWAInstallButton language={settings.language} />
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="flex-1 md:ms-60 lg:ms-64 p-4 sm:p-6 pb-24 md:pb-8 max-w-[1600px] w-full">
+        {activeTab === 'dashboard' && (
+          <DashboardView
+            projects={projects}
+            language={settings.language}
+            lengthUnit={settings.lengthUnit}
+            weightUnit={settings.weightUnit}
+            onStartTemplate={handleCreateFromCategory}
+            onOpenProject={handleOpenProject}
+            onDuplicateProject={handleDuplicateProject}
+            onDeleteProject={(id) => {
+              const target = projects.find((p) => p.id === id);
+              if (target) setPendingDelete({ type: 'project', id, label: target.name });
+            }}
+            onNavigateProjects={() => setActiveTab('projects')}
+          />
+        )}
+
+        {activeTab === 'workspace' && activeProject && (
+          <WorkspaceView
+            project={activeProject}
+            library={library}
+            settings={settings}
+            onUpdateProject={handleUpdateProject}
+            onUpdateSettings={updateSettings}
+            onSaveToLibrary={handleSaveLibraryProduct}
+          />
+        )}
+
+        {activeTab === 'projects' && (
+          <ProjectsView
+            projects={projects}
+            settings={settings}
+            onCreateNew={() => handleCreateFromCategory('container')}
+            onOpenProject={handleOpenProject}
+            onDuplicateProject={handleDuplicateProject}
+            onRenameProject={handleRenameProject}
+            onDeleteProject={(id) => {
+              const target = projects.find((p) => p.id === id);
+              if (target) setPendingDelete({ type: 'project', id, label: target.name });
+            }}
+            onImportBackup={(proj) => {
+              setProjects((prev) => [proj, ...prev]);
+              saveProjectToDb(proj);
+            }}
+          />
+        )}
+
+        {activeTab === 'library' && (
+          <ProductLibraryView
+            library={library}
+            lengthUnit={settings.lengthUnit}
+            weightUnit={settings.weightUnit}
+            language={settings.language}
+            onSaveProduct={handleSaveLibraryProduct}
+            onDeleteProduct={(id) => {
+              const target = library.find((p) => p.id === id);
+              if (target) setPendingDelete({ type: 'product', id, label: target.name });
+            }}
+            onAddToActiveProject={handleAddLibraryProductToActive}
+          />
+        )}
+
+        {activeTab === 'history' && (
+          <HistoryView
+            history={history}
+            weightUnit={settings.weightUnit}
+            language={settings.language}
+            onOpenProject={handleOpenProject}
+            onClearHistory={() => {
+              setHistory([]);
+              clearHistoryFromDb();
+            }}
+          />
+        )}
+
+        {activeTab === 'reports' && activeProject && (
+          <ReportsView
+            project={activeProject}
+            settings={settings}
+            onGoToWorkspace={() => setActiveTab('workspace')}
+          />
+        )}
+
+        {activeTab === 'settings' && (
+          <SettingsView settings={settings} onUpdateSettings={updateSettings} />
+        )}
+      </main>
+
+      {/* Mobile Bottom Navigation Bar (5 thumb-friendly tabs, <= 56px) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-zinc-900 text-zinc-300 border-t border-zinc-800 grid grid-cols-5 items-center no-print">
+        {(
+          [
+            { id: 'dashboard', label: t(settings.language, 'dashboard'), icon: <LayoutDashboard className="w-4 h-4" /> },
+            { id: 'workspace', label: settings.language === 'ar' ? 'العرض 3D' : '3D', icon: <Box className="w-4 h-4" /> },
+            { id: 'projects', label: t(settings.language, 'projects'), icon: <FolderKanban className="w-4 h-4" /> },
+            { id: 'library', label: t(settings.language, 'library'), icon: <Package className="w-4 h-4" /> },
+            { id: 'settings', label: t(settings.language, 'settings'), icon: <SettingsIcon className="w-4 h-4" /> },
+          ] as const
+        ).map((item) => {
+          const active = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex flex-col items-center justify-center h-full px-1 ${
+                active ? 'text-orange-500 font-semibold' : 'text-zinc-400'
+              }`}
+            >
+              {item.icon}
+              <span className="text-[10px] mt-0.5 truncate max-w-full">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Delete Confirmation Modal */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl border border-zinc-200 space-y-4">
+            <h3 className="text-sm font-bold text-zinc-900">
+              {t(settings.language, 'delete')} · {pendingDelete.label}
+            </h3>
+            <p className="text-xs text-zinc-600">{t(settings.language, 'deleteConfirm')}</p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setPendingDelete(null)}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer"
+              >
+                {t(settings.language, 'cancel')}
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 cursor-pointer"
+              >
+                {t(settings.language, 'delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <OfflineIndicator language={settings.language} />
+    </div>
+  );
+}
