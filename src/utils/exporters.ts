@@ -10,16 +10,19 @@ import {
 } from '../types/packvol';
 import { formatDims, formatLength, formatVolume, formatWeight, fromKg, fromMm, toKg, toMm } from './units';
 import { translateStrategyName } from '../i18n/translations';
+import { getNextDistinctColor, normalizeColorHex } from './colors';
 
-const PALETTE = ['#dc2626', '#2563eb', '#d97706', '#0d9488', '#ea580c', '#475569', '#059669', '#9333ea'];
-
-function safeFilePart(raw: string): string {
-  const cleaned = raw.replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_').trim();
-  return cleaned.slice(0, 48) || 'PackVolPro';
+export function safeFilePart(raw: string): string {
+  const cleaned = raw
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '');
+  return cleaned.slice(0, 80) || 'Project';
 }
 
-function resolveDisplayProjectName(project: Project, language: Language): string {
-  return language === 'ar' && project.nameAr ? project.nameAr : project.name;
+export function resolveDisplayProjectName(project: Project, language: Language): string {
+  return (language === 'ar' && project.nameAr ? project.nameAr : project.name).trim() || 'Project';
 }
 
 function resolveDisplaySpaceName(project: Project, language: Language): string {
@@ -270,11 +273,34 @@ export function downloadProductsExcelTemplate(
   );
 }
 
+export interface ParsedImportPackagesResult {
+  packages: PackageSpec[];
+  allSameColor: boolean;
+  sharedColor: string | null;
+  hasExplicitColorColumn: boolean;
+}
+
 export async function parseImportedPackagesFile(
   file: File,
   defaultLengthUnit: LengthUnit = 'mm',
-  defaultWeightUnit: WeightUnit = 'kg'
+  defaultWeightUnit: WeightUnit = 'kg',
+  existingColors: Iterable<string> = []
 ): Promise<PackageSpec[]> {
+  const res = await parseImportedPackagesDetailed(
+    file,
+    defaultLengthUnit,
+    defaultWeightUnit,
+    existingColors
+  );
+  return res.packages;
+}
+
+export async function parseImportedPackagesDetailed(
+  file: File,
+  defaultLengthUnit: LengthUnit = 'mm',
+  defaultWeightUnit: WeightUnit = 'kg',
+  existingColors: Iterable<string> = []
+): Promise<ParsedImportPackagesResult> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheetName = workbook.SheetNames[0];
@@ -311,6 +337,12 @@ export async function parseImportedPackagesFile(
 
   const specs: PackageSpec[] = [];
   const baseTs = Date.now();
+  const usedColors = new Set<string>();
+  for (const c of existingColors) {
+    if (c) usedColors.add(c.trim().toLowerCase());
+  }
+  const explicitColors: string[] = [];
+  let hasExplicitColorColumn = false;
 
   rows.forEach((row, idx) => {
     const hasAnyValue = Object.values(row).some((v) => String(v ?? '').trim() !== '');
@@ -467,10 +499,14 @@ export async function parseImportedPackagesFile(
     const priority =
       Number.isFinite(prioNum) ? Math.min(10, Math.max(1, Math.round(prioNum))) : 5;
 
-    const rawColor = String(
-      findColumn(row, ['اللون', 'لون', 'color', 'hex'])?.value ?? ''
-    ).trim();
-    const color = /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : PALETTE[idx % PALETTE.length];
+    const rawColorCol = findColumn(row, ['اللون', 'لون', 'color', 'hex']);
+    if (rawColorCol) hasExplicitColorColumn = true;
+    const rawColor = String(rawColorCol?.value ?? '').trim();
+    const parsedColor = normalizeColorHex(rawColor);
+    if (parsedColor) explicitColors.push(parsedColor);
+
+    const color = parsedColor ?? getNextDistinctColor(usedColors);
+    usedColors.add(color.toLowerCase());
 
     specs.push({
       id: `imp-${baseTs}-${idx}`,
@@ -496,7 +532,15 @@ export async function parseImportedPackagesFile(
     });
   });
 
-  return specs;
+  const uniqueColors = new Set(specs.map((s) => s.color.toLowerCase()));
+  const allSameColor = specs.length >= 2 && uniqueColors.size === 1;
+
+  return {
+    packages: specs,
+    allSameColor,
+    sharedColor: allSameColor ? specs[0].color : explicitColors[0] ?? null,
+    hasExplicitColorColumn,
+  };
 }
 
 export function exportToExcel(
@@ -506,13 +550,14 @@ export function exportToExcel(
   weightUnit: WeightUnit,
   language: Language = 'en'
 ): void {
+  const projName = resolveDisplayProjectName(project, language);
   const wb = XLSX.utils.book_new();
+  wb.Props = { Title: projName };
   const isAr = language === 'ar';
   if (isAr) {
     wb.Workbook = { Views: [{ RTL: true }] };
   }
 
-  const projName = resolveDisplayProjectName(project, language);
   const spaceName = resolveDisplaySpaceName(project, language);
   const stratName = translateStrategyName(language, result.strategyName);
 
@@ -716,7 +761,7 @@ export function exportToExcel(
     isAr ? 'غير محمل' : 'Unloaded'
   );
 
-  XLSX.writeFile(wb, `PackVolPro_${safeFilePart(projName)}.xlsx`);
+  XLSX.writeFile(wb, `${safeFilePart(projName)}.xlsx`);
 }
 
 export function exportToCsv(
@@ -792,7 +837,7 @@ export function exportToCsv(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `PackVolPro_${safeFilePart(projName)}.csv`;
+  a.download = `${safeFilePart(projName)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1335,8 +1380,8 @@ export async function exportToPdf(
     pgCtx.font = `500 13px ${FONT_STACK}`;
     pgCtx.fillText(
       isAr
-        ? `باك فول برو · صفحة ${idx + 1} من ${pages.length}`
-        : `PackVol Pro · Page ${idx + 1} of ${pages.length}`,
+        ? `${projName} · صفحة ${idx + 1} من ${pages.length}`
+        : `${projName} · Page ${idx + 1} of ${pages.length}`,
       A4_W_PX / 2,
       A4_H_PX - 30
     );
@@ -1345,7 +1390,7 @@ export async function exportToPdf(
     doc.addImage(pgCanvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297, undefined, 'FAST');
   });
 
-  doc.save(`PackVolPro_Report_${safeFilePart(projName)}.pdf`);
+  doc.save(`${safeFilePart(projName)}.pdf`);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1482,13 +1527,14 @@ export function exportCompactSummaryExcel(
   language: Language = 'en',
   containerIndexFilter?: number | null
 ): void {
+  const projName = resolveDisplayProjectName(project, language);
   const wb = XLSX.utils.book_new();
+  wb.Props = { Title: projName };
   const isAr = language === 'ar';
   if (isAr) {
     wb.Workbook = { Views: [{ RTL: true }] };
   }
 
-  const projName = resolveDisplayProjectName(project, language);
   const isSingleContainer =
     containerIndexFilter !== undefined && containerIndexFilter !== null;
   const rows = buildCompactReportRows(project, result, language, containerIndexFilter);
@@ -1572,7 +1618,20 @@ export function exportCompactSummaryExcel(
         }
   );
 
-  const wsMain = XLSX.utils.json_to_sheet(tableObjects);
+  const scopeText = isSingleContainer
+    ? isAr
+      ? `الحاوية #${containerIndexFilter + 1}`
+      : `Container #${containerIndexFilter + 1}`
+    : isAr
+      ? `جميع الحاويات (${result.containersUsed})`
+      : `All Containers (${result.containersUsed})`;
+
+  const wsMain = XLSX.utils.aoa_to_sheet([
+    [isAr ? 'اسم المشروع' : 'Project Name', projName],
+    [isAr ? 'النطاق' : 'Scope', scopeText],
+    [],
+  ]);
+  XLSX.utils.sheet_add_json(wsMain, tableObjects, { origin: 'A4' });
   XLSX.utils.book_append_sheet(
     wb,
     wsMain,
@@ -1593,6 +1652,7 @@ export function exportCompactSummaryExcel(
         perContRows.push(
           isAr
             ? {
+                'اسم المشروع': projName,
                 الحاوية: `#${cIdx + 1} · ${spName}`,
                 'رمز المنتج SKU': cr.sku,
                 'اسم الصنف': cr.name,
@@ -1601,6 +1661,7 @@ export function exportCompactSummaryExcel(
                 'إجمالي الحجم': formatVolume(cr.totalVolumeMm3, lengthUnit),
               }
             : {
+                'Project Name': projName,
                 Container: `#${cIdx + 1} · ${spName}`,
                 SKU: cr.sku,
                 Product: cr.name,
@@ -1620,7 +1681,7 @@ export function exportCompactSummaryExcel(
     }
   }
 
-  XLSX.writeFile(wb, `PackVolPro_Compact_${safeFilePart(projName)}.xlsx`);
+  XLSX.writeFile(wb, `${safeFilePart(projName)}_${isAr ? 'تقرير_مختصر' : 'Compact'}.xlsx`);
 }
 
 export function exportCompactSummaryCsv(
@@ -1683,7 +1744,7 @@ export function exportCompactSummaryCsv(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `PackVolPro_Compact_${safeFilePart(projName)}.csv`;
+  a.download = `${safeFilePart(projName)}_${isAr ? 'تقرير_مختصر' : 'Compact'}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -2001,8 +2062,8 @@ export async function exportCompactSummaryPdf(
     pgCtx.font = `500 13px ${FONT_STACK}`;
     pgCtx.fillText(
       isAr
-        ? `باك فول برو · التقرير المختصر · صفحة ${idx + 1} من ${pages.length}`
-        : `PackVol Pro · Compact Report · Page ${idx + 1} of ${pages.length}`,
+        ? `${projName} · التقرير المختصر · صفحة ${idx + 1} من ${pages.length}`
+        : `${projName} · Compact Report · Page ${idx + 1} of ${pages.length}`,
       A4_W_PX / 2,
       A4_H_PX - 30
     );
@@ -2011,15 +2072,16 @@ export async function exportCompactSummaryPdf(
     doc.addImage(pgCanvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297, undefined, 'FAST');
   });
 
-  doc.save(`PackVolPro_Compact_Report_${safeFilePart(projName)}.pdf`);
+  doc.save(`${safeFilePart(projName)}_${isAr ? 'تقرير_مختصر' : 'Compact'}.pdf`);
 }
 
-export function exportProjectBackupJson(project: Project): void {
+export function exportProjectBackupJson(project: Project, language: Language = 'en'): void {
+  const projName = resolveDisplayProjectName(project, language);
   const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `PackVolPro_Backup_${safeFilePart(project.name)}.json`;
+  a.download = `${safeFilePart(projName)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }

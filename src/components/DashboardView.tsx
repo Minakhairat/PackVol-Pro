@@ -20,6 +20,7 @@ import {
   WeightUnit,
 } from '../types/packvol';
 import { formatDims, formatVolume, formatWeight } from '../utils/units';
+import { resolveDisplayProjectName } from '../utils/exporters';
 import { t } from '../i18n/translations';
 
 interface DashboardViewProps {
@@ -122,8 +123,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Header Banner (White & Red) */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white text-zinc-900 rounded-xl p-6 border-2 border-red-100 shadow-sm">
-        <div className="space-y-1 max-w-2xl border-s-4 border-red-600 ps-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white text-zinc-900 rounded-xl p-4 sm:p-6 border-2 border-red-100 shadow-sm">
+        <div className="space-y-1 max-w-2xl border-s-4 border-red-600 ps-3 sm:ps-4">
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">
             {language === 'ar'
               ? 'مركز تحسين الأحمال والمساحات ثلاثي الأبعاد'
@@ -182,22 +183,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        <div className="rounded-lg border border-zinc-200 bg-white p-4">
-          <div className="text-xs font-medium text-zinc-500">{t(language, 'totalLoadedWeight')}</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-zinc-900">
+        <div className="rounded-lg border border-zinc-200 bg-white p-3.5 sm:p-4 min-w-0">
+          <div className="text-xs font-medium text-zinc-500 truncate">{t(language, 'totalLoadedWeight')}</div>
+          <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-zinc-900 truncate">
             {formatWeight(totalLoadedWeightKg, weightUnit)}
           </div>
-          <div className="mt-1 text-[11px] text-zinc-500">
+          <div className="mt-1 text-[11px] text-zinc-500 truncate">
             {language === 'ar' ? 'الكتلة الإجمالية' : 'Cumulative cargo mass'}
           </div>
         </div>
 
-        <div className="rounded-lg border border-zinc-200 bg-white p-4">
-          <div className="text-xs font-medium text-zinc-500">{t(language, 'emptySpace')}</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-zinc-900">
+        <div className="rounded-lg border border-zinc-200 bg-white p-3.5 sm:p-4 min-w-0">
+          <div className="text-xs font-medium text-zinc-500 truncate">{t(language, 'emptySpace')}</div>
+          <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-zinc-900 truncate">
             {formatVolume(totalRemainingVolMm3, lengthUnit)}
           </div>
-          <div className="mt-1 text-[11px] text-zinc-500">
+          <div className="mt-1 text-[11px] text-zinc-500 truncate">
             {language === 'ar' ? 'حجم متبقي غير مستغل' : 'Residual open volume'}
           </div>
         </div>
@@ -267,7 +268,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="divide-y divide-zinc-100">
             {projects.slice(0, 6).map((proj) => {
               const pkgCount = proj.packages.reduce((s, p) => s + p.quantity, 0);
-              const projName = language === 'ar' && proj.nameAr ? proj.nameAr : proj.name;
+              const projName = resolveDisplayProjectName(proj, language);
               const spaceName =
                 language === 'ar' && proj.space.nameAr ? proj.space.nameAr : proj.space.name;
               const fleetLen = proj.spaces?.length ?? 1;

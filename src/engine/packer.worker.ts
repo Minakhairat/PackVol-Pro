@@ -16,6 +16,9 @@ export interface WorkerRequest {
     mode: OptimizationMode;
     allowRotation: boolean;
     loadingDirection: LoadingDirection;
+    targetUtilizationPct?: number;
+    autoDetermineContainers?: boolean;
+    preferKeepItemSameContainer?: boolean;
   };
 }
 

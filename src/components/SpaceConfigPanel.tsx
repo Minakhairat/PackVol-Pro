@@ -69,7 +69,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
   return (
     <div className="space-y-3">
       {/* Category filter buttons */}
-      <div className="grid grid-cols-5 gap-1 p-1 bg-zinc-100 rounded-lg">
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-1 p-1 bg-zinc-100 rounded-lg">
         {categories.map((cat) => (
           <button
             key={cat.id}
@@ -80,7 +80,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
                 onUpdateSpace({ ...first }, first.loadingDirection, true);
               }
             }}
-            className={`py-1.5 px-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer truncate ${
+            className={`py-2 sm:py-1.5 px-1.5 text-[11px] font-medium rounded-md transition-colors cursor-pointer truncate ${
               space.category === cat.id
                 ? 'bg-red-600 text-white shadow-sm font-semibold'
                 : 'text-zinc-600 hover:text-zinc-900'
@@ -110,7 +110,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
       </div>
 
       {/* Internal Dimensions */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <div>
           <label className="block text-[11px] font-medium text-zinc-600 mb-1">
             {t(language, 'internalLength')} ({lengthUnit})
@@ -150,7 +150,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
       </div>
 
       {/* Payload, Tare & Floor limit */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <div>
           <label className="block text-[11px] font-medium text-zinc-600 mb-1">
             {t(language, 'maxPayload')} ({weightUnit})
@@ -192,7 +192,7 @@ export const SpaceConfigPanel: React.FC<SpaceConfigPanelProps> = ({
       </div>
 
       {/* Door Clearance & Loading Direction */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <div>
           <label className="block text-[11px] font-medium text-zinc-600 mb-1">
             {t(language, 'doorWidth')} ({lengthUnit})

@@ -10,6 +10,9 @@
   html {
     font-family: var(--font-sans);
     scroll-behavior: smooth;
+    overflow-x: clip;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   html[dir="rtl"] {
@@ -25,9 +28,20 @@
     min-height: 100dvh;
     background-color: #fafafa;
     color: #18181b;
-    overflow-x: hidden;
+    overflow-x: clip;
     overscroll-behavior-y: contain;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Prevent iOS Safari automatic viewport zoom when focusing inputs < 16px */
+  @supports (-webkit-touch-callout: none) {
+    @media (max-width: 767px) {
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+      select,
+      textarea {
+        font-size: 16px;
+      }
+    }
   }
 }
 

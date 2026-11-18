@@ -198,6 +198,10 @@ export interface OptimizationResult {
   loadedPackagesCount: number;
   unloadedPackagesCount: number;
   containersUsed: number;
+  configuredContainersCount?: number;
+  autoDeterminedContainers?: boolean;
+  targetUtilizationPct?: number;
+  preferKeepItemSameContainer?: boolean;
   estimatedTrips: number;
   spaceVolumeMm3: number;
   occupiedVolumeMm3: number;
@@ -230,6 +234,8 @@ export interface Project {
   mode: OptimizationMode;
   allowRotation: boolean;
   loadingDirection: LoadingDirection;
+  targetUtilizationPct?: number;
+  preferKeepItemSameContainer?: boolean;
   lastResult: OptimizationResult | null;
   createdAt: number;
   updatedAt: number;

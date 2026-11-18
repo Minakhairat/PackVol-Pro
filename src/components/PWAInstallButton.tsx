@@ -36,7 +36,7 @@ export const PWAInstallButton: React.FC<{ language: Language; compact?: boolean 
         }`}
       >
         <Download className="w-3.5 h-3.5 shrink-0" />
-        <span className={compact ? 'hidden xs:inline sm:inline' : ''}>{t(language, 'installApp')}</span>
+        <span className={compact ? 'hidden sm:inline' : ''}>{t(language, 'installApp')}</span>
       </button>
 
       {showGuide && (

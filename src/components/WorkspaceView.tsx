@@ -19,9 +19,11 @@ import {
   Layers,
   Library,
   MousePointerClick,
+  PackageCheck,
   Play,
   Plus,
   RotateCw,
+  Sparkles,
   Trash2,
   Undo2,
   Upload,
@@ -45,6 +47,7 @@ import {
   t,
   translateStrategyName,
   translateVerificationName,
+  TranslationKey,
 } from '../i18n/translations';
 import { SpaceConfigPanel } from './SpaceConfigPanel';
 import { PackageFormModal } from './PackageFormModal';
@@ -55,13 +58,17 @@ import {
   exportToCsv,
   exportToExcel,
   exportToPdf,
-  parseImportedPackagesFile,
+  parseImportedPackagesDetailed,
+  resolveDisplayProjectName,
+  safeFilePart,
 } from '../utils/exporters';
+import { assignDistinctColors, getNextDistinctColor } from '../utils/colors';
 import { getAllowedOrientations, runOptimization } from '../engine/packer';
 import {
   buildResultFromManualPlacements,
   computeDropY,
   findNextValidSpot,
+  placeAllManualUnitsForSpec,
   settleFloatingPackages,
   validateManualPlacement,
 } from '../engine/manualPacker';
@@ -114,6 +121,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   const [showPkgModal, setShowPkgModal] = useState(false);
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [showAddContainerModal, setShowAddContainerModal] = useState(false);
+  const [pendingSameColorImport, setPendingSameColorImport] = useState<{
+    packages: PackageSpec[];
+    sharedColor: string;
+  } | null>(null);
   const [mobileSection, setMobileSection] = useState<'setup' | '3d' | 'results'>('3d');
   const [resultTab, setResultTab] = useState<'summary' | 'compact' | 'views2d' | 'sequence' | 'strategies'>('summary');
   const [mobileFullscreen3D, setMobileFullscreen3D] = useState(false);
@@ -205,9 +216,19 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
   const pushManifestChange = (nextPackages: PackageSpec[]) => {
     setUndoStack((prev) => [...prev.slice(-14), project.packages]);
+    const colorById = new Map(nextPackages.map((p) => [p.id, p.color]));
     onUpdateProject((prev) => ({
       ...prev,
       packages: nextPackages,
+      lastResult: prev.lastResult
+        ? {
+            ...prev.lastResult,
+            placedPackages: prev.lastResult.placedPackages.map((pp) => {
+              const nextColor = colorById.get(pp.packageId);
+              return nextColor && nextColor !== pp.color ? { ...pp, color: nextColor } : pp;
+            }),
+          }
+        : null,
       updatedAt: Date.now(),
     }));
   };
@@ -372,8 +393,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   };
 
   const handleDuplicatePackage = (pkg: PackageSpec) => {
+    const nextColor = getNextDistinctColor(project.packages.map((p) => p.color));
     const copy: PackageSpec = {
       ...pkg,
+      color: nextColor,
       id: `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       sku: `${pkg.sku}-COPY`,
     };
@@ -381,8 +404,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   };
 
   const handleAddFromLibrary = (libPkg: PackageSpec) => {
+    const existingColors = project.packages.map((p) => p.color.toLowerCase());
+    const nextColor = existingColors.includes(libPkg.color.toLowerCase())
+      ? getNextDistinctColor(existingColors)
+      : libPkg.color;
     const copy: PackageSpec = {
       ...libPkg,
+      color: nextColor,
       id: `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
     };
     pushManifestChange([...project.packages, copy]);
@@ -393,9 +421,21 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const imported = await parseImportedPackagesFile(file, lengthUnit, weightUnit);
-      if (imported.length > 0) {
-        pushManifestChange([...project.packages, ...imported]);
+      const parsed = await parseImportedPackagesDetailed(
+        file,
+        lengthUnit,
+        weightUnit,
+        project.packages.map((p) => p.color)
+      );
+      if (parsed.packages.length > 0) {
+        if (parsed.allSameColor) {
+          setPendingSameColorImport({
+            packages: parsed.packages,
+            sharedColor: parsed.sharedColor || parsed.packages[0].color,
+          });
+        } else {
+          pushManifestChange([...project.packages, ...parsed.packages]);
+        }
       }
     } catch (err) {
       setOptError(err instanceof Error ? err.message : 'Failed to parse Excel/CSV file.');
@@ -404,7 +444,9 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     }
   };
 
-  const handleRunOptimization = () => {
+  const targetUtilPct = Math.max(1, Math.min(100, project.targetUtilizationPct ?? 95));
+
+  const handleRunOptimization = (autoDetermineContainers = false) => {
     if (project.packages.length === 0) {
       setOptError(t(language, 'errAddPkgFirst'));
       return;
@@ -414,11 +456,56 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     setIsOptimizing(true);
     setOptProgress(5);
     setOptStage(
-      language === 'ar' ? 'تهيئة محرك التحسين ثلاثي الأبعاد...' : 'Initializing 3D packing engine...'
+      autoDetermineContainers
+        ? language === 'ar'
+          ? 'حساب عدد الحاويات المطلوبة وتحسين التحميل من الداخل للخارج...'
+          : 'Auto-calculating required containers & packing inside-out...'
+        : language === 'ar'
+          ? 'تهيئة محرك التحسين ثلاثي الأبعاد...'
+          : 'Initializing 3D packing engine...'
     );
 
     const jobId = `job-${Date.now()}`;
     activeJobIdRef.current = jobId;
+
+    const applyResult = (res: OptimizationResult) => {
+      setIsOptimizing(false);
+      setOptProgress(100);
+      setActiveContainerIdx(0);
+      setSelectedInstanceId(null);
+      setActiveStepLimit(null);
+      onUpdateProject(
+        (prev) => {
+          let nextSpaces = prev.spaces && prev.spaces.length > 0 ? prev.spaces : [prev.space];
+          if (autoDetermineContainers && res.containerSummaries.length > 0) {
+            nextSpaces = res.containerSummaries.map((cs) => cs.space ?? prev.space);
+          }
+          return {
+            ...prev,
+            space: nextSpaces[0],
+            spaces: nextSpaces,
+            lastResult: res,
+            updatedAt: Date.now(),
+          };
+        },
+        true
+      );
+      if (window.innerWidth < 768) {
+        setMobileSection('3d');
+      }
+    };
+
+    const optPayload = {
+      space: projectSpaces[0],
+      spaces: projectSpaces,
+      packages: project.packages,
+      mode: project.mode,
+      allowRotation: project.allowRotation,
+      loadingDirection: project.loadingDirection,
+      targetUtilizationPct: targetUtilPct,
+      autoDetermineContainers,
+      preferKeepItemSameContainer: Boolean(project.preferKeepItemSameContainer),
+    };
 
     try {
       const worker = new Worker(new URL('../engine/packer.worker.ts', import.meta.url), {
@@ -437,22 +524,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             language === 'ar' ? translateStrategyName('ar', msg.stage) : msg.stage
           );
         } else if (msg.type === 'result') {
-          setIsOptimizing(false);
-          setOptProgress(100);
-          setActiveContainerIdx(0);
-          setSelectedInstanceId(null);
-          setActiveStepLimit(null);
-          onUpdateProject(
-            (prev) => ({
-              ...prev,
-              lastResult: msg.result as OptimizationResult,
-              updatedAt: Date.now(),
-            }),
-            true
-          );
-          if (window.innerWidth < 768) {
-            setMobileSection('3d');
-          }
+          applyResult(msg.result as OptimizationResult);
           worker.terminate();
           workerRef.current = null;
         } else if (msg.type === 'cancelled') {
@@ -470,45 +542,18 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
       worker.onerror = () => {
         worker.terminate();
         workerRef.current = null;
-        const res = runOptimization({
-          space: projectSpaces[0],
-          spaces: projectSpaces,
-          packages: project.packages,
-          mode: project.mode,
-          allowRotation: project.allowRotation,
-          loadingDirection: project.loadingDirection,
-        });
-        setIsOptimizing(false);
-        setActiveContainerIdx(0);
-        setSelectedInstanceId(null);
-        onUpdateProject((prev) => ({ ...prev, lastResult: res, updatedAt: Date.now() }), true);
+        const res = runOptimization(optPayload);
+        applyResult(res);
       };
 
       worker.postMessage({
         type: 'optimize',
         jobId,
-        payload: {
-          space: projectSpaces[0],
-          spaces: projectSpaces,
-          packages: project.packages,
-          mode: project.mode,
-          allowRotation: project.allowRotation,
-          loadingDirection: project.loadingDirection,
-        },
+        payload: optPayload,
       });
     } catch {
-      const res = runOptimization({
-        space: projectSpaces[0],
-        spaces: projectSpaces,
-        packages: project.packages,
-        mode: project.mode,
-        allowRotation: project.allowRotation,
-        loadingDirection: project.loadingDirection,
-      });
-      setIsOptimizing(false);
-      setActiveContainerIdx(0);
-      setSelectedInstanceId(null);
-      onUpdateProject((prev) => ({ ...prev, lastResult: res, updatedAt: Date.now() }), true);
+      const res = runOptimization(optPayload);
+      applyResult(res);
     }
   };
 
@@ -764,6 +809,84 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     });
   };
 
+  const handleManualLoadAllOfItem = () => {
+    if (!manualActiveSpec || !manualActiveOrientation) return;
+    const placedSoFar = placedCountByPkgId.get(manualActiveSpec.id) ?? 0;
+    const rem = manualActiveSpec.quantity - placedSoFar;
+    if (rem <= 0) {
+      setManualFeedback({ ok: false, msg: t(language, 'noRemainingUnits') });
+      return;
+    }
+
+    const displayName =
+      language === 'ar' && manualActiveSpec.nameAr
+        ? manualActiveSpec.nameAr
+        : manualActiveSpec.name;
+    const displayCategory =
+      language === 'ar' && manualActiveSpec.categoryAr
+        ? manualActiveSpec.categoryAr
+        : manualActiveSpec.category;
+
+    const { newBoxes, placedCount } = placeAllManualUnitsForSpec(
+      activeSpace,
+      activeContainerPlaced,
+      activeContainerIdx,
+      manualActiveSpec,
+      rem,
+      manualActiveOrientation,
+      project.allowRotation,
+      project.loadingDirection,
+      specsMap,
+      displayName,
+      displayCategory
+    );
+
+    if (placedCount === 0) {
+      setManualFeedback({
+        ok: false,
+        msg:
+          language === 'ar'
+            ? 'لا توجد مساحة صالحة متبقية في هذه الحاوية لتحميل وحدات إضافية من هذا البند.'
+            : 'No valid space remaining in this container for additional units of this item.',
+      });
+      return;
+    }
+
+    const nextPlaced = [...(result?.placedPackages ?? []), ...newBoxes];
+    commitManualPlacements(nextPlaced);
+    const lastBox = newBoxes[newBoxes.length - 1];
+    setSelectedInstanceId(lastBox.instanceId);
+    setManualCoords({ x: lastBox.x, y: lastBox.y, z: lastBox.z });
+
+    const remainingAfter = rem - placedCount;
+    if (remainingAfter === 0) {
+      setManualFeedback({
+        ok: true,
+        msg:
+          language === 'ar'
+            ? `تم تحميل كامل البند (${placedCount}/${rem} وحدة) بنجاح في الحاوية #${activeContainerIdx + 1}.`
+            : `Loaded entire item (${placedCount}/${rem} units) into Container #${activeContainerIdx + 1}.`,
+      });
+      const nextAvailable = project.packages.find(
+        (p) =>
+          p.id !== manualActiveSpec.id &&
+          p.quantity - (placedCountByPkgId.get(p.id) ?? 0) > 0
+      );
+      if (nextAvailable) {
+        setManualPkgId(nextAvailable.id);
+        setManualOrientIdx(0);
+      }
+    } else {
+      setManualFeedback({
+        ok: true,
+        msg:
+          language === 'ar'
+            ? `تم تحميل ${placedCount} من أصل ${rem} وحدة في الحاوية #${activeContainerIdx + 1} — امتلأت الحاوية وتبقى ${remainingAfter} وحدة.`
+            : `Loaded ${placedCount} of ${rem} remaining units into Container #${activeContainerIdx + 1} — container full, ${remainingAfter} left.`,
+      });
+    }
+  };
+
   const handleManualMoveSelected = (deltaX: number, deltaZ: number, drop = false, rotate = false) => {
     if (!selectedPlacedPkg) return;
     const spec = specsMap.get(selectedPlacedPkg.packageId);
@@ -926,9 +1049,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   const handleExportPng = () => {
     const dataUrl = viewportRef.current?.captureSnapshot();
     if (!dataUrl) return;
+    const projName = resolveDisplayProjectName(project, language);
     const a = document.createElement('a');
     a.href = dataUrl;
-    a.download = `PackVolPro_3D_${project.name.replace(/[^a-z0-9-_]+/gi, '_').slice(0, 32)}.png`;
+    a.download = `${safeFilePart(projName)}_3D.png`;
     a.click();
   };
 
@@ -960,91 +1084,101 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
   const totalManifestQty = project.packages.reduce((s, p) => s + p.quantity, 0);
   const totalManifestWeight = project.packages.reduce((s, p) => s + p.weight * p.quantity, 0);
-  const displayProjectName = language === 'ar' && project.nameAr ? project.nameAr : project.name;
+  const displayProjectName = resolveDisplayProjectName(project, language);
 
   return (
     <div className="space-y-4">
       {/* Top Project Action Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white border border-zinc-200 rounded-xl p-3.5">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <input
-            type="text"
-            value={displayProjectName}
-            onChange={(e) =>
-              onUpdateProject((prev) => ({
-                ...prev,
-                name: language === 'ar' ? prev.name : e.target.value,
-                nameAr: language === 'ar' ? e.target.value : prev.nameAr,
-                updatedAt: Date.now(),
-              }))
-            }
-            className="text-base font-bold text-zinc-900 bg-transparent border-b border-transparent hover:border-zinc-300 focus:border-red-600 focus:outline-none truncate min-w-0 flex-1"
-          />
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 bg-white border border-zinc-200 rounded-xl p-3 sm:p-3.5">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className="relative flex items-center gap-2 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-zinc-50/60 px-2.5 py-1.5 focus-within:border-red-600 focus-within:bg-white transition-colors">
+            <Edit3 className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <input
+              type="text"
+              aria-label={t(language, 'projectNameLabel')}
+              placeholder={t(language, 'projectNamePlaceholder')}
+              value={language === 'ar' ? (project.nameAr ?? project.name) : project.name}
+              onChange={(e) => {
+                const nextName = e.target.value;
+                onUpdateProject((prev) => ({
+                  ...prev,
+                  name: nextName,
+                  nameAr: nextName,
+                  updatedAt: Date.now(),
+                }));
+              }}
+              className="text-sm sm:text-base font-bold text-zinc-900 bg-transparent focus:outline-none truncate min-w-0 flex-1"
+            />
+          </div>
           <span className="hidden sm:inline text-xs font-mono text-zinc-500 tabular-nums shrink-0">
             {totalManifestQty} {t(language, 'pkgsShort')} ·{' '}
             {formatWeight(totalManifestWeight, weightUnit)}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 shrink-0">
           {/* Auto vs Manual Loading Switcher */}
-          <div className="inline-flex rounded-lg bg-zinc-100 p-1 border border-zinc-200">
+          <div className="grid grid-cols-2 sm:inline-flex rounded-lg bg-zinc-100 p-1 border border-zinc-200 w-full sm:w-auto">
             <button
               type="button"
               onClick={() => setWorkspaceMode('auto')}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+              className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 workspaceMode === 'auto'
                   ? 'bg-red-600 text-white shadow-sm'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
-              <Wand2 className="w-3.5 h-3.5" />
-              <span>{t(language, 'autoModeBtn')}</span>
+              <Wand2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{t(language, 'autoModeBtn')}</span>
             </button>
             <button
               type="button"
               onClick={() => setWorkspaceMode('manual')}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+              className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 workspaceMode === 'manual'
                   ? 'bg-red-600 text-white shadow-sm'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
-              <Hand className="w-3.5 h-3.5" />
-              <span>{t(language, 'manualModeBtn')}</span>
+              <Hand className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{t(language, 'manualModeBtn')}</span>
             </button>
           </div>
 
           {result && (
-            <>
+            <div className="grid grid-cols-3 sm:flex items-center gap-1.5 w-full sm:w-auto">
               <button
+                type="button"
                 onClick={handleExportPdf}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-red-50 hover:border-red-300 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-2 sm:py-1.5 text-xs font-medium text-zinc-800 hover:bg-red-50 hover:border-red-300 cursor-pointer"
               >
-                <FileText className="w-3.5 h-3.5 text-red-600" />
+                <FileText className="w-3.5 h-3.5 text-red-600 shrink-0" />
                 <span>PDF</span>
               </button>
               <button
+                type="button"
                 onClick={() => exportToExcel(project, result, lengthUnit, weightUnit, language)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-2 sm:py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 <span>Excel</span>
               </button>
               <button
+                type="button"
                 onClick={() => exportToCsv(project, result, lengthUnit, weightUnit, language)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-2 sm:py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5 text-zinc-600" />
+                <Download className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
                 <span>CSV</span>
               </button>
-            </>
+            </div>
           )}
 
           {isOptimizing ? (
             <button
+              type="button"
               onClick={handleCancelOptimization}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-700 cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-800 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-700 cursor-pointer w-full sm:w-auto"
             >
               <X className="w-3.5 h-3.5" />
               <span>
@@ -1052,13 +1186,25 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               </span>
             </button>
           ) : (
-            <button
-              onClick={handleRunOptimization}
-              className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-red-700 transition-colors cursor-pointer whitespace-nowrap shadow-sm"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              <span>{t(language, 'optimizeNow')}</span>
-            </button>
+            <div className="grid grid-cols-1 min-[420px]:grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => handleRunOptimization(false)}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-3.5 py-2.5 sm:py-2 text-xs sm:text-sm font-semibold text-white hover:bg-red-700 transition-colors cursor-pointer sm:whitespace-nowrap shadow-sm"
+              >
+                <Play className="w-4 h-4 fill-current shrink-0" />
+                <span className="truncate">{t(language, 'optimizeNow')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRunOptimization(true)}
+                title={t(language, 'autoLoadHint')}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-900 px-3.5 py-2.5 sm:py-2 text-xs sm:text-sm font-semibold text-white hover:bg-zinc-800 transition-colors cursor-pointer sm:whitespace-nowrap shadow-sm"
+              >
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="truncate">{t(language, 'autoLoadContainersBtn')}</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -1231,6 +1377,49 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               <p className="text-[11px] text-zinc-600 leading-relaxed">
                 {t(language, 'manualHint')}
               </p>
+
+              {/* Manual Loading Progress & Confirmation Status */}
+              {totalManifestQty > 0 && (() => {
+                const loadedCount = result?.loadedPackagesCount ?? 0;
+                const remainingAll = Math.max(0, totalManifestQty - loadedCount);
+                const pct = Math.min(100, Math.round((loadedCount / totalManifestQty) * 100));
+                const allLoadedValid = remainingAll === 0 && (result?.verification.isValid ?? false);
+                return (
+                  <div
+                    className={`rounded-lg border p-2.5 space-y-1.5 ${
+                      allLoadedValid
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                        : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 text-xs font-bold">
+                      <span className="flex items-center gap-1.5">
+                        {allLoadedValid ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        )}
+                        <span>
+                          {allLoadedValid
+                            ? t(language, 'manualConfirmComplete')
+                            : `${t(language, 'manualPendingNotice')}: ${remainingAll} ${t(language, 'remShort')}`}
+                        </span>
+                      </span>
+                      <span className="font-mono tabular-nums shrink-0">
+                        {loadedCount}/{totalManifestQty} ({pct}%)
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-white/80 overflow-hidden border border-black/5">
+                      <div
+                        className={`h-full transition-all duration-200 ${
+                          allLoadedValid ? 'bg-emerald-600' : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Tool Switcher: Place Box vs Select/Move Box */}
               <div className="grid grid-cols-2 gap-1 p-1 bg-zinc-100 rounded-lg">
@@ -1410,11 +1599,29 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     <button
                       type="button"
                       onClick={handleAutoPlaceNext}
-                      className="rounded-lg bg-red-600 hover:bg-red-700 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
+                      className="rounded-lg border border-red-600 bg-red-50 hover:bg-red-100 px-3 py-2 text-xs font-semibold text-red-700 cursor-pointer"
                     >
                       {t(language, 'autoPlaceNext')}
                     </button>
                   </div>
+
+                  {(() => {
+                    const placedForSpec = placedCountByPkgId.get(manualActiveSpec.id) ?? 0;
+                    const remForSpec = Math.max(0, manualActiveSpec.quantity - placedForSpec);
+                    return (
+                      <button
+                        type="button"
+                        disabled={remForSpec === 0}
+                        onClick={handleManualLoadAllOfItem}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 disabled:text-zinc-500 px-3 py-2.5 text-xs font-bold text-white shadow-sm cursor-pointer transition-colors"
+                      >
+                        <PackageCheck className="w-4 h-4" />
+                        <span>
+                          {t(language, 'loadEntireItemBtn')} ({remForSpec}/{manualActiveSpec.quantity})
+                        </span>
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1504,7 +1711,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
           {/* Optimization Settings Card */}
           <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
-            <h2 className="text-sm font-bold text-zinc-900">{t(language, 'optimizationMode')}</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-bold text-zinc-900">{t(language, 'optimizationMode')}</h2>
+              <span className="text-[10px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5">
+                {t(language, 'insideOutBadge')}
+              </span>
+            </div>
+
             <select
               value={project.mode}
               onChange={(e) =>
@@ -1523,6 +1736,68 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               <option value="weight_balance">{t(language, 'modeWeightBalance')}</option>
             </select>
 
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-700 leading-relaxed space-y-1">
+              <p>{t(language, `modeDesc_${project.mode}` as TranslationKey)}</p>
+              <p className="text-[10px] font-semibold text-emerald-700">
+                {t(language, 'autoBestScenarioNote')}
+              </p>
+            </div>
+
+            {/* Target Space Utilization % Input */}
+            <div className="pt-1 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-semibold text-zinc-800">
+                  {t(language, 'targetUtilLabel')}
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={targetUtilPct}
+                    onChange={(e) => {
+                      const raw = Number(e.target.value);
+                      if (!Number.isFinite(raw)) return;
+                      const clamped = Math.max(1, Math.min(100, Math.round(raw)));
+                      onUpdateProject((prev) => ({
+                        ...prev,
+                        targetUtilizationPct: clamped,
+                        updatedAt: Date.now(),
+                      }));
+                    }}
+                    className="w-16 rounded-md border border-zinc-300 px-2 py-1 text-xs font-mono font-bold text-center tabular-nums focus:outline-none focus:border-red-600"
+                  />
+                  <span className="text-xs font-mono font-bold text-zinc-600">%</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {[80, 85, 90, 95, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() =>
+                      onUpdateProject((prev) => ({
+                        ...prev,
+                        targetUtilizationPct: pct,
+                        updatedAt: Date.now(),
+                      }))
+                    }
+                    className={`flex-1 rounded border px-1.5 py-0.5 text-[11px] font-mono font-semibold cursor-pointer transition-colors ${
+                      targetUtilPct === pct
+                        ? 'border-red-600 bg-red-600 text-white'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100'
+                    }`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-zinc-500 leading-snug">
+                {t(language, 'targetUtilHint')}
+              </p>
+            </div>
+
             <label className="flex items-center justify-between text-xs font-medium text-zinc-800 cursor-pointer pt-1">
               <span>{t(language, 'allowGlobalRotation')}</span>
               <input
@@ -1538,6 +1813,76 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                 className="accent-red-600 w-4 h-4"
               />
             </label>
+
+            {/* Keep Entire Item in Same Container Choice (Yes / No) */}
+            <div className="pt-2 border-t border-zinc-100 space-y-1.5">
+              <div className="text-xs font-semibold text-zinc-800">
+                {t(language, 'preferSameContainerLabel')}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateProject((prev) => ({
+                      ...prev,
+                      preferKeepItemSameContainer: false,
+                      updatedAt: Date.now(),
+                    }))
+                  }
+                  className={`rounded-md border px-2.5 py-1.5 text-[11px] font-semibold cursor-pointer transition-colors ${
+                    !project.preferKeepItemSameContainer
+                      ? 'border-zinc-900 bg-zinc-900 text-white'
+                      : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100'
+                  }`}
+                >
+                  {t(language, 'preferSameContainerNo')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateProject((prev) => ({
+                      ...prev,
+                      preferKeepItemSameContainer: true,
+                      updatedAt: Date.now(),
+                    }))
+                  }
+                  className={`rounded-md border px-2.5 py-1.5 text-[11px] font-semibold cursor-pointer transition-colors ${
+                    project.preferKeepItemSameContainer
+                      ? 'border-red-600 bg-red-600 text-white'
+                      : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100'
+                  }`}
+                >
+                  {t(language, 'preferSameContainerYes')}
+                </button>
+              </div>
+              <p className="text-[11px] text-zinc-500 leading-snug">
+                {t(language, 'preferSameContainerHint')}
+              </p>
+            </div>
+
+            <div className="pt-2 border-t border-zinc-100 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={isOptimizing}
+                onClick={() => handleRunOptimization(false)}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{t(language, 'optimizeNow')}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isOptimizing}
+                onClick={() => handleRunOptimization(true)}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>{t(language, 'autoLoadContainersBtn')}</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-zinc-500 leading-snug">
+              {t(language, 'autoLoadHint')}
+            </p>
           </div>
 
           {/* Cargo Manifest Card */}
@@ -1648,6 +1993,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     <div className="flex flex-col items-end gap-1.5 shrink-0">
                       <div className="flex items-center border border-zinc-300 rounded-md overflow-hidden bg-white">
                         <button
+                          type="button"
                           onClick={() => {
                             const nextQ = Math.max(1, pkg.quantity - 1);
                             pushManifestChange(
@@ -1656,7 +2002,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                               )
                             );
                           }}
-                          className="px-2 py-0.5 text-xs font-bold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
+                          className="px-2.5 sm:px-2 py-1 sm:py-0.5 text-xs font-bold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
                         >
                           -
                         </button>
@@ -1672,9 +2018,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                               )
                             );
                           }}
-                          className="w-11 text-center text-xs font-mono tabular-nums py-0.5 focus:outline-none"
+                          className="w-12 sm:w-11 text-center text-xs font-mono tabular-nums py-1 sm:py-0.5 focus:outline-none"
                         />
                         <button
+                          type="button"
                           onClick={() =>
                             pushManifestChange(
                               project.packages.map((p) =>
@@ -1682,7 +2029,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                               )
                             )
                           }
-                          className="px-2 py-0.5 text-xs font-bold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
+                          className="px-2.5 sm:px-2 py-1 sm:py-0.5 text-xs font-bold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
                         >
                           +
                         </button>
@@ -1741,14 +2088,15 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               mobileSection === '3d' ? 'block' : 'hidden md:block'
             } ${
               mobileFullscreen3D
-                ? 'fixed inset-0 z-50 bg-zinc-900 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))]'
+                ? 'fixed inset-0 w-[100dvw] h-[100dvh] z-50 bg-zinc-900 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))]'
                 : 'h-[52dvh] min-h-[300px] sm:h-[400px] md:h-[460px] lg:h-[520px] xl:h-[600px] 2xl:h-[680px]'
             }`}
           >
             {mobileFullscreen3D && (
               <button
+                type="button"
                 onClick={() => setMobileFullscreen3D(false)}
-                className="fixed top-[max(1rem,env(safe-area-inset-top))] right-4 z-50 rounded-lg bg-red-600 text-white px-3 py-1.5 text-xs font-semibold shadow-lg cursor-pointer"
+                className="fixed top-[max(1rem,env(safe-area-inset-top))] end-4 z-50 rounded-lg bg-red-600 text-white px-3.5 py-2 min-h-[40px] text-xs font-semibold shadow-lg cursor-pointer"
               >
                 {t(language, 'close')}
               </button>
@@ -1887,6 +2235,256 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             </div>
           )}
 
+          {/* Clear Load Completion Confirmation Banner (Auto Optimize, Auto-Load & Manual) */}
+          {result && result.totalRequiredPackages > 0 && (() => {
+            const allLoaded =
+              result.unloadedPackagesCount === 0 &&
+              result.loadedPackagesCount === result.totalRequiredPackages &&
+              result.verification.isValid;
+            const totalConfigured = result.configuredContainersCount ?? projectSpaces.length;
+            const emptyLeft = Math.max(0, totalConfigured - result.containersUsed);
+
+            return (
+              <div
+                className={`rounded-xl border px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-sm ${
+                  allLoaded
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                    : 'bg-amber-50 border-amber-300 text-amber-950'
+                }`}
+              >
+                <div className="flex items-start gap-2.5 min-w-0">
+                  {allLoaded ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs sm:text-sm font-bold">
+                      {allLoaded
+                        ? t(language, 'loadingCompleteTitle')
+                        : t(language, 'loadingIncompleteTitle')}
+                    </div>
+                    <div className="text-[11px] sm:text-xs opacity-90 mt-0.5">
+                      {language === 'ar' ? (
+                        <>
+                          تم تحميل{' '}
+                          <span className="font-mono font-bold">
+                            {result.loadedPackagesCount}/{result.totalRequiredPackages}
+                          </span>{' '}
+                          وحدة في{' '}
+                          <span className="font-mono font-bold">{result.containersUsed}</span>{' '}
+                          {t(language, 'containerUnitLabel')}
+                          {emptyLeft > 0 && (
+                            <>
+                              {' '}
+                              (تم ترك <span className="font-mono font-bold">{emptyLeft}</span>{' '}
+                              حاوية فارغة دون توزيع)
+                            </>
+                          )}{' '}
+                          · استغلال الحجم:{' '}
+                          <span className="font-mono font-bold">{result.volumeUtilizationPct}%</span>
+                          {result.targetUtilizationPct ? ` (الحد المستهدف ${result.targetUtilizationPct}%)` : ''}
+                        </>
+                      ) : (
+                        <>
+                          Loaded{' '}
+                          <span className="font-mono font-bold">
+                            {result.loadedPackagesCount}/{result.totalRequiredPackages}
+                          </span>{' '}
+                          units in{' '}
+                          <span className="font-mono font-bold">{result.containersUsed}</span>{' '}
+                          container(s)
+                          {emptyLeft > 0 && (
+                            <>
+                              {' '}
+                              (<span className="font-mono font-bold">{emptyLeft}</span> extra
+                              container(s) left empty)
+                            </>
+                          )}{' '}
+                          · Volume:{' '}
+                          <span className="font-mono font-bold">{result.volumeUtilizationPct}%</span>
+                          {result.targetUtilizationPct ? ` (target max ${result.targetUtilizationPct}%)` : ''}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={`text-xs font-mono font-bold px-2.5 py-1 rounded-md shrink-0 ${
+                    allLoaded
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-amber-600 text-white'
+                  }`}
+                >
+                  {result.loadedPackagesCount}/{result.totalRequiredPackages}
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Active Container(s) Volume Utilization Progress Indicator */}
+          {(() => {
+            const totalSlots = Math.max(
+              effectiveSpacesForResult.length,
+              projectSpaces.length,
+              result?.containersUsed ?? 1
+            );
+            const containerMetrics = Array.from({ length: totalSlots }, (_, cIdx) => {
+              const cs = result?.containerSummaries[cIdx];
+              const sp = cs?.space ?? effectiveSpacesForResult[cIdx] ?? projectSpaces[cIdx] ?? project.space;
+              const spVol = Math.max(1, sp.internalLength * sp.internalWidth * sp.internalHeight);
+              const placedInCont = cs
+                ? null
+                : (result?.placedPackages ?? []).filter((p) => p.containerIndex === cIdx);
+              const loadedCount = cs ? cs.loadedCount : (placedInCont?.length ?? 0);
+              const occupiedVol = cs
+                ? cs.occupiedVolumeMm3
+                : (placedInCont?.reduce((s, p) => s + p.dx * p.dy * p.dz, 0) ?? 0);
+              const utilPct = cs
+                ? cs.volumeUtilizationPct
+                : Math.round((occupiedVol / spVol) * 1000) / 10;
+              const isSelected = cIdx === activeContainerIdx;
+              return {
+                cIdx,
+                sp,
+                spName: language === 'ar' && sp.nameAr ? sp.nameAr : sp.name,
+                spVol,
+                occupiedVol,
+                loadedCount,
+                utilPct,
+                isSelected,
+                isActive: loadedCount > 0 || isSelected,
+              };
+            }).filter((m) => m.isActive);
+
+            if (containerMetrics.length === 0) return null;
+
+            return (
+              <div className="rounded-xl border border-zinc-200 bg-white p-3.5 space-y-2.5 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-zinc-900">
+                    <Container className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>{t(language, 'activeContainerUtilTitle')}</span>
+                  </div>
+                  <span className="text-[11px] font-mono font-semibold text-zinc-600">
+                    {t(language, 'targetShort')}:{' '}
+                    <span className="text-zinc-900 font-bold">{targetUtilPct}%</span>
+                  </span>
+                </div>
+
+                <div
+                  className={`grid gap-2.5 ${
+                    containerMetrics.length === 1
+                      ? 'grid-cols-1'
+                      : containerMetrics.length === 2
+                        ? 'grid-cols-1 sm:grid-cols-2'
+                        : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3'
+                  }`}
+                >
+                  {containerMetrics.map((m) => {
+                    const targetReached = m.utilPct >= targetUtilPct;
+                    const nearTarget = !targetReached && m.utilPct >= targetUtilPct * 0.85;
+                    const barColorClass = targetReached
+                      ? 'bg-emerald-600'
+                      : nearTarget
+                        ? 'bg-amber-500'
+                        : m.utilPct > 0
+                          ? 'bg-red-600'
+                          : 'bg-zinc-300';
+                    const pctTextClass = targetReached
+                      ? 'text-emerald-700'
+                      : nearTarget
+                        ? 'text-amber-700'
+                        : m.utilPct > 0
+                          ? 'text-red-600'
+                          : 'text-zinc-500';
+                    const clampedPct = Math.min(100, Math.max(0, m.utilPct));
+                    const deltaToTarget = Math.max(0, Math.round((targetUtilPct - m.utilPct) * 10) / 10);
+
+                    return (
+                      <button
+                        key={m.cIdx}
+                        type="button"
+                        onClick={() => {
+                          setActiveContainerIdx(m.cIdx);
+                          setSelectedInstanceId(null);
+                          setActiveStepLimit(null);
+                          setIsPlayingSequence(false);
+                        }}
+                        className={`text-start rounded-lg border p-2.5 transition-colors cursor-pointer space-y-2 ${
+                          m.isSelected
+                            ? targetReached
+                              ? 'border-emerald-500 bg-emerald-50/40 ring-1 ring-emerald-500/30'
+                              : 'border-red-500 bg-red-50/30 ring-1 ring-red-500/20'
+                            : 'border-zinc-200 bg-zinc-50/60 hover:bg-zinc-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex items-center gap-1.5">
+                            <span
+                              className={`text-[11px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                                m.isSelected
+                                  ? targetReached
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-red-600 text-white'
+                                  : 'bg-zinc-200 text-zinc-700'
+                              }`}
+                            >
+                              #{m.cIdx + 1}
+                            </span>
+                            <span className="text-xs font-semibold text-zinc-900 truncate">
+                              {m.spName}
+                            </span>
+                          </div>
+                          <span className={`text-sm font-mono font-bold tabular-nums shrink-0 ${pctTextClass}`}>
+                            {m.utilPct.toFixed(1)}%
+                          </span>
+                        </div>
+
+                        {/* Progress Track with Dynamic Color + Target Threshold Tick */}
+                        <div
+                          role="progressbar"
+                          aria-label={`#${m.cIdx + 1} ${m.spName} ${t(language, 'volumeUtil')}`}
+                          aria-valuenow={Math.round(m.utilPct * 10) / 10}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          className="relative h-2.5 w-full rounded-full bg-zinc-200/80 overflow-visible"
+                        >
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${barColorClass}`}
+                            style={{ width: `${clampedPct}%` }}
+                          />
+                          <div
+                            title={`${t(language, 'targetShort')}: ${targetUtilPct}%`}
+                            style={{ insetInlineStart: `${Math.min(100, Math.max(0, targetUtilPct))}%` }}
+                            className="absolute -top-0.5 -bottom-0.5 w-0.5 bg-zinc-900/75 rounded-full pointer-events-none"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono tabular-nums">
+                          <span className="text-zinc-500 truncate">
+                            {formatVolume(m.occupiedVol, lengthUnit)} / {formatVolume(m.spVol, lengthUnit)} · {m.loadedCount}{' '}
+                            {t(language, 'pkgsShort')}
+                          </span>
+                          {targetReached ? (
+                            <span className="inline-flex items-center gap-1 font-sans font-bold text-emerald-700 shrink-0">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>{t(language, 'targetReachedBadge')}</span>
+                            </span>
+                          ) : (
+                            <span className="text-zinc-500 shrink-0">
+                              -{deltaToTarget.toFixed(1)}% {t(language, 'remainingToTarget')}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Container Selector + Category & Layer Filter Strip */}
           {(result || projectSpaces.length > 1) && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
@@ -1899,6 +2497,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                       const cs = result?.containerSummaries[cIdx];
                       const sp = cs?.space ?? projectSpaces[cIdx] ?? project.space;
                       const spShort = language === 'ar' && sp.nameAr ? sp.nameAr : sp.name;
+                      const isEmptyCont = cs && cs.loadedCount === 0;
                       return (
                         <button
                           key={cIdx}
@@ -1911,11 +2510,17 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                           className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold cursor-pointer whitespace-nowrap ${
                             activeContainerIdx === cIdx
                               ? 'bg-red-600 text-white'
-                              : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
+                              : isEmptyCont
+                                ? 'bg-zinc-50 text-zinc-400 border border-dashed border-zinc-300 hover:bg-zinc-100'
+                                : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
                           }`}
                         >
                           #{cIdx + 1} · {spShort.slice(0, 14)}
-                          {cs ? ` (${cs.volumeUtilizationPct}%)` : ''}
+                          {cs
+                            ? isEmptyCont
+                              ? ` (0% · ${t(language, 'emptyContainerTag')})`
+                              : ` (${cs.volumeUtilizationPct}%)`
+                            : ''}
                         </button>
                       );
                     }
@@ -1983,11 +2588,18 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
-                    onClick={handleRunOptimization}
+                    onClick={() => handleRunOptimization(false)}
                     className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span>{t(language, 'optimizeNow')}</span>
+                  </button>
+                  <button
+                    onClick={() => handleRunOptimization(true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{t(language, 'autoLoadContainersBtn')}</span>
                   </button>
                   <button
                     onClick={() => setWorkspaceMode('manual')}
@@ -2048,9 +2660,12 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                 ? t(language, 'verifiedValid')
                                 : t(language, 'verifiedInvalid')}
                             </div>
-                            <div className="text-[11px] opacity-80">
+                            <div className="text-[11px] opacity-85">
                               {translateStrategyName(language, result.strategyName)} ·{' '}
                               {t(language, 'solvedIn')} {result.durationMs} ms
+                            </div>
+                            <div className="text-[10px] opacity-75 mt-0.5">
+                              {t(language, 'autoBestScenarioNote')}
                             </div>
                           </div>
                         </div>
@@ -2247,6 +2862,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                       lengthUnit={lengthUnit}
                       language={language}
                       containerIndex={activeContainerIdx}
+                      projectName={displayProjectName}
                       selectedInstanceId={selectedInstanceId}
                       onSelectPackage={(pkg) => setSelectedInstanceId(pkg.instanceId)}
                     />
@@ -2398,6 +3014,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
       {showPkgModal && (
         <PackageFormModal
           initial={editingPkg}
+          usedColors={project.packages.filter((p) => p.id !== editingPkg?.id).map((p) => p.color)}
           lengthUnit={lengthUnit}
           weightUnit={weightUnit}
           language={language}
@@ -2494,6 +3111,84 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Uniform-Color Excel Import Notice Modal */}
+      {pendingSameColorImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white border border-zinc-200 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-amber-600 text-white">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <h3 className="text-sm font-bold">{t(language, 'sameColorImportTitle')}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingSameColorImport(null)}
+                className="p-1 text-amber-100 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-xs text-zinc-700 leading-relaxed">
+                {t(language, 'sameColorImportDesc')}
+              </p>
+
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-4 h-4 rounded border border-black/15 shrink-0"
+                    style={{ backgroundColor: pendingSameColorImport.sharedColor }}
+                  />
+                  <span className="text-zinc-600">{t(language, 'detectedColorLabel')}:</span>
+                  <span className="font-mono font-semibold text-zinc-900 uppercase">
+                    {pendingSameColorImport.sharedColor}
+                  </span>
+                </div>
+                <div className="font-mono font-semibold text-zinc-800">
+                  {t(language, 'itemsCountLabel')}: {pendingSameColorImport.packages.length}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const colored = assignDistinctColors(
+                      pendingSameColorImport.packages,
+                      project.packages.map((p) => p.color)
+                    );
+                    pushManifestChange([...project.packages, ...colored]);
+                    setPendingSameColorImport(null);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 hover:bg-red-700 px-3.5 py-2.5 text-xs font-semibold text-white cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{t(language, 'autoAssignColorsBtn')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingSameColorImport(null);
+                    fileInputRef.current?.click();
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5 text-red-600" />
+                  <span>{t(language, 'reuploadChooseColorsBtn')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSameColorImport(null)}
+                  className="w-full rounded-lg px-3.5 py-2 text-xs font-medium text-zinc-500 hover:bg-zinc-100 cursor-pointer"
+                >
+                  {t(language, 'cancel')}
+                </button>
+              </div>
             </div>
           </div>
         </div>

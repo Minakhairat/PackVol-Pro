@@ -3,9 +3,11 @@ import { X } from 'lucide-react';
 import { Language, LengthUnit, PackageSpec, WeightUnit } from '../types/packvol';
 import { fromKg, fromMm, toKg, toMm } from '../utils/units';
 import { t } from '../i18n/translations';
+import { DISTINCT_COLOR_PALETTE, getNextDistinctColor } from '../utils/colors';
 
 interface PackageFormModalProps {
   initial?: PackageSpec | null;
+  usedColors?: string[];
   lengthUnit: LengthUnit;
   weightUnit: WeightUnit;
   language: Language;
@@ -13,19 +15,11 @@ interface PackageFormModalProps {
   onClose: () => void;
 }
 
-const COLOR_SWATCHES = [
-  '#dc2626',
-  '#2563eb',
-  '#d97706',
-  '#0d9488',
-  '#ea580c',
-  '#475569',
-  '#059669',
-  '#7c3aed',
-];
+const COLOR_SWATCHES = DISTINCT_COLOR_PALETTE.slice(0, 12);
 
 export const PackageFormModal: React.FC<PackageFormModalProps> = ({
   initial,
+  usedColors = [],
   lengthUnit,
   weightUnit,
   language,
@@ -49,7 +43,9 @@ export const PackageFormModal: React.FC<PackageFormModalProps> = ({
     initial ? String(fromKg(initial.weight, weightUnit)) : String(fromKg(20, weightUnit))
   );
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 10));
-  const [color, setColor] = useState(initial?.color ?? COLOR_SWATCHES[0]);
+  const [color, setColor] = useState(
+    () => initial?.color ?? getNextDistinctColor(usedColors)
+  );
   const [category, setCategory] = useState(
     language === 'ar' && initial?.categoryAr
       ? initial.categoryAr

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Copy,
   Download,
@@ -11,6 +12,7 @@ import {
   Plus,
   Printer,
   Search,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -36,9 +38,12 @@ import {
   exportToCsv,
   exportToExcel,
   exportToPdf,
-  parseImportedPackagesFile,
+  parseImportedPackagesDetailed,
   parseProjectsBackupJson,
+  resolveDisplayProjectName,
+  safeFilePart,
 } from '../utils/exporters';
+import { assignDistinctColors, getNextDistinctColor } from '../utils/colors';
 import { runAllVerificationTests, TestCaseResult } from '../engine/testSuite';
 
 /* -------------------------------------------------------------------------- */
@@ -118,50 +123,53 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <h1 className="text-xl font-bold text-zinc-900">{t(language, 'projects')}</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full lg:w-auto">
+          <div className="relative w-full sm:w-52">
             <Search className="w-3.5 h-3.5 text-zinc-400 absolute start-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t(language, 'searchPlaceholder')}
-              className="ps-8 pe-3 py-1.5 text-xs rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
+              className="w-full ps-8 pe-3 py-2 sm:py-1.5 text-xs rounded-lg sm:rounded-md border border-zinc-300 bg-white focus:outline-none focus:border-red-600"
             />
           </div>
-          <button
-            type="button"
-            disabled={projects.length === 0}
-            onClick={() => exportProjectsListJson(projects)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-45 cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>{t(language, 'exportProjectsJson')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => backupInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
-          >
-            <Upload className="w-3.5 h-3.5 text-red-600" />
-            <span>{t(language, 'importProjectsJson')}</span>
-          </button>
-          <input
-            ref={backupInputRef}
-            type="file"
-            accept=".json,application/json"
-            onChange={handleImportJson}
-            className="hidden"
-          />
-          <button
-            onClick={onCreateNew}
-            className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>{t(language, 'newProject')}</span>
-          </button>
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              disabled={projects.length === 0}
+              onClick={() => exportProjectsListJson(projects)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg sm:rounded-md border border-red-200 bg-red-50 px-3 py-2 sm:py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-45 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{t(language, 'exportProjectsJson')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => backupInputRef.current?.click()}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg sm:rounded-md border border-zinc-300 bg-white px-3 py-2 sm:py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5 text-red-600 shrink-0" />
+              <span className="truncate">{t(language, 'importProjectsJson')}</span>
+            </button>
+            <input
+              ref={backupInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleImportJson}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={onCreateNew}
+              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 rounded-lg sm:rounded-md bg-red-600 px-3.5 py-2 sm:py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span>{t(language, 'newProject')}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -189,7 +197,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           const pkgTotal = proj.packages.reduce((s, p) => s + p.quantity, 0);
           const weightTotal = proj.packages.reduce((s, p) => s + p.weight * p.quantity, 0);
           const fleetLen = proj.spaces?.length ?? 1;
-          const projName = language === 'ar' && proj.nameAr ? proj.nameAr : proj.name;
+          const projName = resolveDisplayProjectName(proj, language);
           const spaceName =
             language === 'ar' && proj.space.nameAr ? proj.space.nameAr : proj.space.name;
 
@@ -203,11 +211,21 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
+                      autoFocus
                       value={renameText}
                       onChange={(e) => setRenameText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          if (renameText.trim()) onRenameProject(proj.id, renameText.trim());
+                          setRenamingId(null);
+                        } else if (e.key === 'Escape') {
+                          setRenamingId(null);
+                        }
+                      }}
                       className="flex-1 rounded border border-red-600 px-2 py-1 text-sm font-semibold focus:outline-none"
                     />
                     <button
+                      type="button"
                       onClick={() => {
                         if (renameText.trim()) onRenameProject(proj.id, renameText.trim());
                         setRenamingId(null);
@@ -266,7 +284,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => exportProjectBackupJson(proj)}
+                    type="button"
+                    onClick={() => exportProjectBackupJson(proj, language)}
                     title={t(language, 'backupJson')}
                     className="p-1.5 rounded border border-zinc-200 text-zinc-600 hover:bg-zinc-50 cursor-pointer"
                   >
@@ -389,6 +408,10 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
   const [editing, setEditing] = useState<PackageSpec | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [importNotice, setImportNotice] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [pendingSameColorImport, setPendingSameColorImport] = useState<{
+    packages: PackageSpec[];
+    sharedColor: string;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const q = search.trim().toLowerCase();
@@ -406,14 +429,24 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const parsed = await parseImportedPackagesFile(file, lengthUnit, weightUnit);
-      if (parsed.length === 0) {
+      const parsed = await parseImportedPackagesDetailed(
+        file,
+        lengthUnit,
+        weightUnit,
+        library.map((p) => p.color)
+      );
+      if (parsed.packages.length === 0) {
         setImportNotice({ ok: false, msg: t(language, 'importPackagesEmpty') });
+      } else if (parsed.allSameColor) {
+        setPendingSameColorImport({
+          packages: parsed.packages,
+          sharedColor: parsed.sharedColor || parsed.packages[0].color,
+        });
       } else {
-        parsed.forEach(onSaveProduct);
+        parsed.packages.forEach(onSaveProduct);
         setImportNotice({
           ok: true,
-          msg: `${parsed.length} ${t(language, 'importPackagesSuccess')}`,
+          msg: `${parsed.packages.length} ${t(language, 'importPackagesSuccess')}`,
         });
       }
     } catch {
@@ -585,6 +618,7 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
                     onClick={() =>
                       onSaveProduct({
                         ...item,
+                        color: getNextDistinctColor(library.map((p) => p.color)),
                         id: `prod-${Date.now()}`,
                         sku: `${item.sku}-COPY`,
                       })
@@ -674,6 +708,7 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
                       onClick={() =>
                         onSaveProduct({
                           ...item,
+                          color: getNextDistinctColor(library.map((p) => p.color)),
                           id: `prod-${Date.now()}`,
                           sku: `${item.sku}-COPY`,
                         })
@@ -699,6 +734,7 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
       {showModal && (
         <PackageFormModal
           initial={editing}
+          usedColors={library.filter((p) => p.id !== editing?.id).map((p) => p.color)}
           lengthUnit={lengthUnit}
           weightUnit={weightUnit}
           language={language}
@@ -712,6 +748,87 @@ export const ProductLibraryView: React.FC<ProductLibraryViewProps> = ({
             setEditing(null);
           }}
         />
+      )}
+
+      {pendingSameColorImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white border border-zinc-200 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-amber-600 text-white">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <h3 className="text-sm font-bold">{t(language, 'sameColorImportTitle')}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingSameColorImport(null)}
+                className="p-1 text-amber-100 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-xs text-zinc-700 leading-relaxed">
+                {t(language, 'sameColorImportDesc')}
+              </p>
+
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-4 h-4 rounded border border-black/15 shrink-0"
+                    style={{ backgroundColor: pendingSameColorImport.sharedColor }}
+                  />
+                  <span className="text-zinc-600">{t(language, 'detectedColorLabel')}:</span>
+                  <span className="font-mono font-semibold text-zinc-900 uppercase">
+                    {pendingSameColorImport.sharedColor}
+                  </span>
+                </div>
+                <div className="font-mono font-semibold text-zinc-800">
+                  {t(language, 'itemsCountLabel')}: {pendingSameColorImport.packages.length}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const colored = assignDistinctColors(
+                      pendingSameColorImport.packages,
+                      library.map((p) => p.color)
+                    );
+                    colored.forEach(onSaveProduct);
+                    setImportNotice({
+                      ok: true,
+                      msg: `${colored.length} ${t(language, 'importPackagesSuccess')}`,
+                    });
+                    setPendingSameColorImport(null);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 hover:bg-red-700 px-3.5 py-2.5 text-xs font-semibold text-white cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{t(language, 'autoAssignColorsBtn')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingSameColorImport(null);
+                    fileRef.current?.click();
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5 text-red-600" />
+                  <span>{t(language, 'reuploadChooseColorsBtn')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSameColorImport(null)}
+                  className="w-full rounded-lg px-3.5 py-2 text-xs font-medium text-zinc-500 hover:bg-zinc-100 cursor-pointer"
+                >
+                  {t(language, 'cancel')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -852,14 +969,38 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const activeSpaceName =
     language === 'ar' && activeSpace.nameAr ? activeSpace.nameAr : activeSpace.name;
 
+  const displayProjName = resolveDisplayProjectName(project, language);
+
+  const handlePrintReport = () => {
+    const prevTitle = document.title;
+    document.title = safeFilePart(displayProjName);
+    const restore = () => {
+      document.title = prevTitle;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    window.print();
+    setTimeout(restore, 1500);
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* Dedicated Print Header with Project Name */}
+      <div className="hidden print:flex items-center justify-between border-b-2 border-red-600 pb-3 mb-4">
+        <div>
+          <div className="text-lg font-bold text-zinc-900">{displayProjName}</div>
+          <div className="text-xs text-zinc-600">{activeSpaceName}</div>
+        </div>
+        <div className="text-xs font-mono text-zinc-500">
+          PackVol Pro · {new Date().toLocaleDateString(language === 'ar' ? 'ar-EG' : undefined)}
+        </div>
+      </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
         <div className="min-w-0">
           <h1 className="text-lg sm:text-xl font-bold text-zinc-900">{t(language, 'reports')}</h1>
           <p className="text-xs text-zinc-500 truncate">
-            {language === 'ar' && project.nameAr ? project.nameAr : project.name} ·{' '}
-            {activeSpaceName}
+            {displayProjName} · {activeSpaceName}
           </p>
         </div>
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -889,7 +1030,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrintReport}
             className="inline-flex items-center justify-center gap-1.5 rounded-lg sm:rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5 shrink-0" />
@@ -983,6 +1124,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         lengthUnit={lengthUnit}
         language={language}
         containerIndex={safeIdx}
+        projectName={displayProjName}
       />
     </div>
   );

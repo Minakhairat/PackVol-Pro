@@ -1323,7 +1323,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
           )}
 
           {selectedPkg && (
-            <div className="bg-white/95 text-zinc-900 px-3 py-2.5 rounded-lg border-2 border-red-600 shadow-lg max-w-[270px] pointer-events-auto">
+            <div className="bg-white/95 text-zinc-900 px-3 py-2 rounded-lg border-2 border-red-600 shadow-lg max-w-[min(270px,calc(100vw-84px))] max-h-[46%] overflow-y-auto pointer-events-auto">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-red-600 font-mono">
                   #{selectedPkg.stepIndex} · {selectedPkg.sku}
@@ -1395,7 +1395,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
         </div>
 
         {/* Collapsible Bottom Control Dock (Zero Viewport Occlusion) */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 w-[calc(100%-24px)] max-w-[820px] flex flex-col items-center">
+        <div className="absolute bottom-2.5 sm:bottom-3 left-1/2 -translate-x-1/2 z-10 w-[calc(100%-16px)] sm:w-[calc(100%-24px)] max-w-[820px] flex flex-col items-center">
           <button
             onClick={() => setHudCollapsed((v) => !v)}
             className="mb-1 inline-flex items-center gap-1 px-3 py-1 rounded-t-md bg-white/95 text-zinc-700 text-[11px] font-semibold border border-b-0 border-zinc-200 hover:text-red-600 shadow-sm cursor-pointer"
@@ -1405,10 +1405,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(
           </button>
 
           {!hudCollapsed && (
-            <div className="w-full bg-white/95 text-zinc-900 rounded-xl border border-zinc-200 p-2.5 shadow-xl space-y-2">
+            <div className="w-full bg-white/95 text-zinc-900 rounded-xl border border-zinc-200 p-2 sm:p-2.5 shadow-xl space-y-1.5 sm:space-y-2">
               {/* Row 1: Camera Presets + View Toggles */}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1 overflow-x-auto">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-1.5 sm:gap-2">
+                <div className="flex items-center gap-1 overflow-x-auto pb-0.5 sm:pb-0 touch-manipulation">
                   {(['isometric', 'front', 'rear', 'side', 'top'] as CameraPreset[]).map((preset) => (
                     <button
                       key={preset}

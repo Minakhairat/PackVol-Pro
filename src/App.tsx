@@ -36,6 +36,8 @@ import {
 import { SPACE_TEMPLATES } from './data/presets';
 import { runOptimization } from './engine/packer';
 import { t } from './i18n/translations';
+import { getNextDistinctColor } from './utils/colors';
+import { resolveDisplayProjectName } from './utils/exporters';
 import { DashboardView } from './components/DashboardView';
 import { WorkspaceView } from './components/WorkspaceView';
 import {
@@ -87,8 +89,9 @@ export default function App() {
           mode: p0.mode,
           allowRotation: p0.allowRotation,
           loadingDirection: p0.loadingDirection,
+          targetUtilizationPct: p0.targetUtilizationPct ?? 95,
         });
-        updatedProjects[0] = { ...p0, lastResult: res };
+        updatedProjects[0] = { ...p0, targetUtilizationPct: p0.targetUtilizationPct ?? 95, lastResult: res };
         await saveProjectToDb(updatedProjects[0]);
       }
 
@@ -186,6 +189,7 @@ export default function App() {
       mode: 'balanced',
       allowRotation: true,
       loadingDirection: tpl.loadingDirection,
+      targetUtilizationPct: 95,
       lastResult: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -208,6 +212,7 @@ export default function App() {
       ...src,
       id: `proj-${Date.now()}`,
       name: `${src.name} (Copy)`,
+      nameAr: `${src.nameAr ?? src.name} (نسخة)`,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -218,7 +223,17 @@ export default function App() {
   const handleRenameProject = (id: string, newName: string) => {
     const target = projects.find((p) => p.id === id);
     if (!target) return;
-    handleUpdateProject({ ...target, name: newName, updatedAt: Date.now() });
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    handleUpdateProject({
+      ...target,
+      name: trimmed,
+      nameAr: trimmed,
+      updatedAt: Date.now(),
+    });
+    setHistory((prev) =>
+      prev.map((h) => (h.projectId === id ? { ...h, projectName: trimmed } : h))
+    );
   };
 
   const handleRestoreProjectsList = (imported: Project[], mode: 'replace' | 'merge') => {
@@ -279,8 +294,13 @@ export default function App() {
       handleCreateFromCategory('container');
       return;
     }
+    const existingColors = activeProject.packages.map((p) => p.color.toLowerCase());
+    const nextColor = existingColors.includes(prod.color.toLowerCase())
+      ? getNextDistinctColor(existingColors)
+      : prod.color;
     const copy: PackageSpec = {
       ...prod,
+      color: nextColor,
       id: `pkg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
     };
     handleUpdateProject({
@@ -315,7 +335,7 @@ export default function App() {
   return (
     <div className="min-h-[100dvh] flex flex-col md:flex-row bg-zinc-50 text-zinc-900">
       {/* Desktop Sidebar (White & Red) */}
-      <aside className="hidden md:flex md:w-60 lg:w-64 md:flex-col md:fixed md:inset-y-0 bg-white text-zinc-900 border-e border-zinc-200 z-30 no-print">
+      <aside className="hidden md:flex md:w-60 lg:w-64 md:flex-col md:fixed md:inset-y-0 md:start-0 bg-white text-zinc-900 border-e border-zinc-200 z-30 no-print">
         <div className="h-14 px-5 flex items-center justify-between border-b border-zinc-200">
           <div className="flex items-center gap-2.5">
             <span className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-red-600 text-white">
@@ -400,14 +420,14 @@ export default function App() {
       </aside>
 
       {/* Mobile Compact Header + Full Drawer Trigger */}
-      <header className="md:hidden sticky top-0 z-30 pt-[env(safe-area-inset-top)] bg-white text-zinc-900 border-b border-zinc-200 no-print">
-        <div className="h-13 px-3 sm:px-4 flex items-center justify-between gap-2">
+      <header className="md:hidden sticky top-0 z-30 pt-[env(safe-area-inset-top)] bg-white/95 backdrop-blur-sm text-zinc-900 border-b border-zinc-200 no-print">
+        <div className="h-12 px-3 sm:px-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen((v) => !v)}
               aria-label="Menu"
-              className="p-1.5 rounded-md text-zinc-700 hover:bg-red-50 hover:text-red-600 cursor-pointer shrink-0"
+              className="p-2 rounded-md text-zinc-700 hover:bg-red-50 hover:text-red-600 cursor-pointer shrink-0 touch-manipulation"
             >
               {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
@@ -420,6 +440,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <select
+              aria-label="Measurement Unit"
               value={settings.lengthUnit}
               onChange={(e) =>
                 updateSettings({ ...settings, lengthUnit: e.target.value as LengthUnit })
@@ -432,6 +453,7 @@ export default function App() {
               <option value="in">in</option>
             </select>
             <button
+              type="button"
               onClick={() =>
                 updateSettings({
                   ...settings,
@@ -447,36 +469,43 @@ export default function App() {
         </div>
 
         {mobileMenuOpen && (
-          <div className="border-t border-zinc-200 bg-white px-3 py-3 space-y-2 shadow-lg">
-            <div className="grid grid-cols-2 gap-1.5">
-              {navItems.map((item) => {
-                const active = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setMobileMenuOpen(false);
-                    }}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                      active
-                        ? 'bg-red-600 text-white font-semibold'
-                        : 'bg-zinc-50 text-zinc-700 hover:bg-red-50 hover:text-red-700'
-                    }`}
-                  >
-                    {item.icon}
-                    <span className="truncate">{item.label}</span>
-                  </button>
-                );
-              })}
+          <>
+            <div
+              className="fixed inset-0 top-[calc(3rem+env(safe-area-inset-top))] bg-black/25 z-20"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-30 border-t border-zinc-200 bg-white px-3 py-3 space-y-2 shadow-lg">
+              <div className="grid grid-cols-2 gap-1.5">
+                {navItems.map((item) => {
+                  const active = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveTab(item.id);
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2.5 min-h-[44px] rounded-lg text-xs font-medium transition-colors cursor-pointer touch-manipulation ${
+                        active
+                          ? 'bg-red-600 text-white font-semibold'
+                          : 'bg-zinc-50 text-zinc-700 hover:bg-red-50 hover:text-red-700'
+                      }`}
+                    >
+                      {item.icon}
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 min-w-0 md:ms-60 lg:ms-64 p-3 sm:p-5 lg:p-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 max-w-[1920px] w-full">
+      <main className="flex-1 min-w-0 overflow-x-clip md:ms-60 lg:ms-64 p-3 sm:p-5 lg:p-6 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8 max-w-[1920px] w-full">
         {activeTab === 'dashboard' && (
           <DashboardView
             projects={projects}
@@ -488,7 +517,12 @@ export default function App() {
             onDuplicateProject={handleDuplicateProject}
             onDeleteProject={(id) => {
               const target = projects.find((p) => p.id === id);
-              if (target) setPendingDelete({ type: 'project', id, label: target.name });
+              if (target)
+                setPendingDelete({
+                  type: 'project',
+                  id,
+                  label: resolveDisplayProjectName(target, settings.language),
+                });
             }}
             onNavigateProjects={() => setActiveTab('projects')}
           />
@@ -515,7 +549,12 @@ export default function App() {
             onRenameProject={handleRenameProject}
             onDeleteProject={(id) => {
               const target = projects.find((p) => p.id === id);
-              if (target) setPendingDelete({ type: 'project', id, label: target.name });
+              if (target)
+                setPendingDelete({
+                  type: 'project',
+                  id,
+                  label: resolveDisplayProjectName(target, settings.language),
+                });
             }}
             onImportBackup={(proj) => {
               setProjects((prev) => [proj, ...prev]);

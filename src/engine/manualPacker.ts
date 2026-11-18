@@ -11,7 +11,7 @@ import {
   UnloadedPackageReason,
   UnloadedReasonCode,
 } from '../types/packvol';
-import { getAllowedOrientations } from './packer';
+import { getAllowedOrientations, packRemainingManualBatchInContainer } from './packer';
 import { verifyPackingSolution } from './verifier';
 
 const EPS = 0.02;
@@ -399,21 +399,46 @@ export function findNextValidSpot(
   specsMap?: Map<string, PackageSpec>
 ): { x: number; y: number; z: number; dx: number; dy: number; dz: number; label: string; validation: ManualPlacementValidation } | null {
   const candidates: { x: number; y: number; z: number }[] = [{ x: 0, y: 0, z: 0 }];
-  for (const b of existingInContainer) {
+  for (let i = 0; i < existingInContainer.length; i++) {
+    const b = existingInContainer[i];
     candidates.push({ x: b.x + b.dx, y: b.y, z: b.z });
     candidates.push({ x: b.x, y: b.y, z: b.z + b.dz });
     candidates.push({ x: b.x, y: b.y + b.dy, z: b.z });
+    candidates.push({ x: b.x + b.dx, y: 0, z: b.z });
+    candidates.push({ x: b.x, y: 0, z: b.z + b.dz });
     candidates.push({ x: b.x + b.dx, y: 0, z: 0 });
     candidates.push({ x: 0, y: 0, z: b.z + b.dz });
+    candidates.push({ x: 0, y: b.y + b.dy, z: b.z });
+    candidates.push({ x: b.x, y: b.y + b.dy, z: 0 });
+
+    // Cross projections onto adjacent box faces for tight gaps
+    for (let j = 0; j < i; j++) {
+      const a = existingInContainer[j];
+      if (a.z < b.z + b.dz && a.z + a.dz > b.z) {
+        candidates.push({ x: b.x + b.dx, y: a.y + a.dy, z: Math.max(a.z, b.z) });
+        candidates.push({ x: a.x + a.dx, y: b.y + b.dy, z: Math.max(a.z, b.z) });
+      }
+      if (a.x < b.x + b.dx && a.x + a.dx > b.x) {
+        candidates.push({ x: Math.max(a.x, b.x), y: a.y + a.dy, z: b.z + b.dz });
+        candidates.push({ x: Math.max(a.x, b.x), y: b.y + b.dy, z: a.z + a.dz });
+      }
+    }
   }
 
-  // Sort candidate anchor points deterministically by floor-first & loading direction
   candidates.sort((a, b) => {
-    if (Math.abs(a.y - b.y) > 1) return a.y - b.y;
     if (loadingDirection === 'side') {
-      return a.z - b.z || a.x - b.x;
+      if (Math.abs(a.z - b.z) > 1) return a.z - b.z;
+      if (Math.abs(a.y - b.y) > 1) return a.y - b.y;
+      return a.x - b.x;
     }
-    return a.x - b.x || a.z - b.z;
+    if (loadingDirection === 'top') {
+      if (Math.abs(a.y - b.y) > 1) return a.y - b.y;
+      if (Math.abs(a.x - b.x) > 1) return a.x - b.x;
+      return a.z - b.z;
+    }
+    if (Math.abs(a.x - b.x) > 1) return a.x - b.x;
+    if (Math.abs(a.y - b.y) > 1) return a.y - b.y;
+    return a.z - b.z;
   });
 
   const allowed = getAllowedOrientations(spec, allowGlobalRotation, space, loadingDirection);
@@ -427,14 +452,37 @@ export function findNextValidSpot(
     ),
   ];
 
+  const { internalLength: L, internalWidth: W, internalHeight: H } = space;
   const seen = new Set<string>();
+  let bestScore = Infinity;
+  let bestSpot: {
+    x: number;
+    y: number;
+    z: number;
+    dx: number;
+    dy: number;
+    dz: number;
+    label: string;
+    validation: ManualPlacementValidation;
+  } | null = null;
+
   for (const pt of candidates) {
+    if (pt.x < -EPS || pt.y < -EPS || pt.z < -EPS) continue;
     const key = `${Math.round(pt.x)}_${Math.round(pt.y)}_${Math.round(pt.z)}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    for (const o of orientations) {
-      const res = validateManualPlacement(
+    if (bestSpot) {
+      const axisPos =
+        loadingDirection === 'side' ? pt.z : loadingDirection === 'top' ? pt.y : pt.x;
+      if (axisPos * 8.0 - 2000 > bestScore) break;
+    }
+
+    for (let oIdx = 0; oIdx < orientations.length; oIdx++) {
+      const o = orientations[oIdx];
+      if (pt.x + o.dx > L + EPS || pt.y + o.dy > H + EPS || pt.z + o.dz > W + EPS) continue;
+
+      const fastRes = validateManualPlacement(
         space,
         existingInContainer,
         spec,
@@ -446,15 +494,100 @@ export function findNextValidSpot(
         pt.z,
         allowGlobalRotation,
         loadingDirection,
-        specsMap
+        undefined
       );
-      if (res.valid) {
-        return { ...pt, dx: o.dx, dy: o.dy, dz: o.dz, label: o.label, validation: res };
+      if (!fastRes.valid) continue;
+
+      const res =
+        specsMap && pt.y > EPS
+          ? validateManualPlacement(
+              space,
+              existingInContainer,
+              spec,
+              o.dx,
+              o.dy,
+              o.dz,
+              pt.x,
+              pt.y,
+              pt.z,
+              allowGlobalRotation,
+              loadingDirection,
+              specsMap
+            )
+          : fastRes;
+
+      if (!res.valid) continue;
+
+      let dirPenalty = pt.x * 8.0 + pt.y * 1.3 + pt.z * 0.45 + (pt.x + o.dx) * 0.6;
+      let remA = W - (pt.z + o.dz);
+      let remB = H - (pt.y + o.dy);
+      let tileA = (W - pt.z) % Math.max(1, o.dz);
+      let tileB = (H - pt.y) % Math.max(1, o.dy);
+
+      if (loadingDirection === 'side') {
+        dirPenalty = pt.z * 8.0 + pt.y * 1.3 + pt.x * 0.45 + (pt.z + o.dz) * 0.6;
+        remA = L - (pt.x + o.dx);
+        remB = H - (pt.y + o.dy);
+        tileA = (L - pt.x) % Math.max(1, o.dx);
+        tileB = (H - pt.y) % Math.max(1, o.dy);
+      } else if (loadingDirection === 'top') {
+        dirPenalty = pt.y * 8.0 + pt.x * 1.0 + pt.z * 0.6 + (pt.y + o.dy) * 0.5;
+        remA = L - (pt.x + o.dx);
+        remB = W - (pt.z + o.dz);
+        tileA = (L - pt.x) % Math.max(1, o.dx);
+        tileB = (W - pt.z) % Math.max(1, o.dz);
+      }
+
+      const flushBonus =
+        (remA < 5 ? -500 : remA < 40 ? -180 : remA * 0.05) +
+        (remB < 5 ? -420 : remB < 40 ? -150 : remB * 0.05) +
+        (tileA < 25 ? -260 : 0) +
+        (tileB < 25 ? -220 : 0);
+      const prefTieBonus = oIdx === 0 ? -5 : 0;
+      const sc = dirPenalty + flushBonus + prefTieBonus;
+
+      if (sc < bestScore) {
+        bestScore = sc;
+        bestSpot = { ...pt, dx: o.dx, dy: o.dy, dz: o.dz, label: o.label, validation: res };
       }
     }
   }
 
-  return null;
+  return bestSpot;
+}
+
+export function placeAllManualUnitsForSpec(
+  space: LoadingSpace,
+  existingInContainer: PlacedPackage[],
+  containerIndex: number,
+  spec: PackageSpec,
+  remainingQty: number,
+  preferredOrientation: { dx: number; dy: number; dz: number; label: string },
+  allowGlobalRotation: boolean,
+  loadingDirection: LoadingDirection,
+  specsMap: Map<string, PackageSpec>,
+  displayName: string,
+  displayCategory: string
+): { newBoxes: PlacedPackage[]; placedCount: number } {
+  const placedRaw = packRemainingManualBatchInContainer(
+    space,
+    existingInContainer,
+    containerIndex,
+    spec,
+    remainingQty,
+    preferredOrientation,
+    allowGlobalRotation,
+    loadingDirection,
+    specsMap
+  );
+
+  const newBoxes = placedRaw.map((b) => ({
+    ...b,
+    name: displayName,
+    category: displayCategory,
+  }));
+
+  return { newBoxes, placedCount: newBoxes.length };
 }
 
 export function settleFloatingPackages(
@@ -522,19 +655,15 @@ export function buildResultFromManualPlacements(
   });
 
   const maxContIdx = placed.reduce((m, p) => Math.max(m, p.containerIndex), 0);
-  const containersUsed = Math.max(spacesList.length, maxContIdx + 1);
+  const configuredCount = Math.max(spacesList.length, placed.length > 0 ? maxContIdx + 1 : 0);
 
-  let totalSpaceVol = 0;
-  let totalPayloadCap = 0;
   const effectiveSpaces: LoadingSpace[] = [];
   const containerSummaries: ContainerSummary[] = [];
 
-  for (let cIdx = 0; cIdx < containersUsed; cIdx++) {
+  for (let cIdx = 0; cIdx < configuredCount; cIdx++) {
     const sp = getSpace(cIdx);
     effectiveSpaces.push(sp);
     const singleSpaceVol = sp.internalLength * sp.internalWidth * sp.internalHeight;
-    totalSpaceVol += singleSpaceVol;
-    totalPayloadCap += sp.maxPayload;
 
     const group = placed.filter((p) => p.containerIndex === cIdx);
     const occVol = group.reduce((s, p) => s + p.dx * p.dy * p.dz, 0);
@@ -567,6 +696,20 @@ export function buildResultFromManualPlacements(
       balanceScore: score,
     });
   }
+
+  const usedSummaries = containerSummaries.filter((cs) => cs.loadedCount > 0);
+  const containersUsed = usedSummaries.length;
+  const metricSummaries = usedSummaries.length > 0 ? usedSummaries : containerSummaries.slice(0, 1);
+
+  const totalSpaceVol = metricSummaries.reduce(
+    (s, cs) =>
+      s +
+      (cs.space
+        ? cs.space.internalLength * cs.space.internalWidth * cs.space.internalHeight
+        : 0),
+    0
+  );
+  const totalPayloadCap = metricSummaries.reduce((s, cs) => s + (cs.space?.maxPayload ?? 0), 0);
 
   const occupiedVol = placed.reduce((s, p) => s + p.dx * p.dy * p.dz, 0);
   const totalWeightKg = Math.round(placed.reduce((s, p) => s + p.weight, 0) * 100) / 100;
@@ -612,7 +755,7 @@ export function buildResultFromManualPlacements(
   const weightPct =
     totalPayloadCap > 0 ? Math.round((totalWeightKg / totalPayloadCap) * 10000) / 100 : 0;
   const avgBalance = Math.round(
-    containerSummaries.reduce((s, c) => s + c.balanceScore, 0) / Math.max(1, containersUsed)
+    metricSummaries.reduce((s, c) => s + c.balanceScore, 0) / Math.max(1, metricSummaries.length)
   );
 
   const emptySpaces: EmptySpaceBox[] = [];
@@ -629,7 +772,8 @@ export function buildResultFromManualPlacements(
     loadedPackagesCount: placed.length,
     unloadedPackagesCount: Math.max(0, totalReq - placed.length),
     containersUsed,
-    estimatedTrips: containersUsed,
+    configuredContainersCount: configuredCount,
+    estimatedTrips: Math.max(1, containersUsed),
     spaceVolumeMm3: totalSpaceVol,
     occupiedVolumeMm3: occupiedVol,
     remainingVolumeMm3: Math.max(0, totalSpaceVol - occupiedVol),

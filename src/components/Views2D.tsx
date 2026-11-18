@@ -8,6 +8,7 @@ import {
   PlacedPackage,
 } from '../types/packvol';
 import { formatDims, formatLength } from '../utils/units';
+import { safeFilePart } from '../utils/exporters';
 import { t } from '../i18n/translations';
 
 interface Views2DProps {
@@ -16,6 +17,7 @@ interface Views2DProps {
   lengthUnit: LengthUnit;
   language: Language;
   containerIndex: number;
+  projectName?: string;
   selectedInstanceId?: string | null;
   onSelectPackage?: (pkg: PlacedPackage) => void;
 }
@@ -26,6 +28,7 @@ export const Views2D: React.FC<Views2DProps> = ({
   lengthUnit,
   language,
   containerIndex,
+  projectName,
   selectedInstanceId,
   onSelectPackage,
 }) => {
@@ -208,8 +211,38 @@ export const Views2D: React.FC<Views2DProps> = ({
     );
   };
 
+  const spaceDisplay = language === 'ar' && space.nameAr ? space.nameAr : space.name;
+
+  const handlePrint = () => {
+    const prevTitle = document.title;
+    if (projectName?.trim()) {
+      document.title = safeFilePart(projectName);
+    }
+    const restore = () => {
+      document.title = prevTitle;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    window.print();
+    setTimeout(restore, 1500);
+  };
+
   return (
     <div className="space-y-3 sm:space-y-4">
+      {projectName && (
+        <div className="hidden print:flex items-center justify-between border-b-2 border-red-600 pb-2 mb-3">
+          <div>
+            <div className="text-base font-bold text-zinc-900">{projectName}</div>
+            <div className="text-xs text-zinc-600">
+              #{containerIndex + 1} · {spaceDisplay}
+            </div>
+          </div>
+          <div className="text-xs font-mono text-zinc-500">
+            {formatDims(space.internalLength, space.internalWidth, space.internalHeight, lengthUnit)}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 no-print">
         <div className="grid grid-cols-2 sm:inline-flex items-center gap-1 p-1 bg-zinc-100 border border-zinc-200 rounded-lg w-full sm:w-auto">
           {(['all', 'top', 'front', 'side'] as const).map((v) => (
@@ -238,7 +271,7 @@ export const Views2D: React.FC<Views2DProps> = ({
 
         <button
           type="button"
-          onClick={() => window.print()}
+          onClick={handlePrint}
           className="inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 sm:py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer w-full sm:w-auto"
         >
           <Printer className="w-3.5 h-3.5 text-red-600" />
