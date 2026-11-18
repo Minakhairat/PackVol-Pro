@@ -1289,7 +1289,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             </div>
 
             {/* Fleet Container Selector & Delete */}
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-0.5">
               {projectSpaces.map((sp, idx) => {
                 const isActive = activeConfigIdx === idx;
                 const spLabel = language === 'ar' && sp.nameAr ? sp.nameAr : sp.name;
@@ -2364,7 +2364,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-zinc-900">
                     <Container className="w-4 h-4 text-red-600 shrink-0" />
-                    <span>{t(language, 'activeContainerUtilTitle')}</span>
+                    <span>
+                      {t(language, 'activeContainerUtilTitle')}
+                      {containerMetrics.length > 1 ? ` (${containerMetrics.length})` : ''}
+                    </span>
                   </div>
                   <span className="text-[11px] font-mono font-semibold text-zinc-600">
                     {t(language, 'targetShort')}:{' '}
@@ -2374,6 +2377,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
                 <div
                   className={`grid gap-2.5 ${
+                    containerMetrics.length > 6 ? 'max-h-[260px] overflow-y-auto pe-1' : ''
+                  } ${
                     containerMetrics.length === 1
                       ? 'grid-cols-1'
                       : containerMetrics.length === 2
@@ -2488,45 +2493,70 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
           {/* Container Selector + Category & Layer Filter Strip */}
           {(result || projectSpaces.length > 1) && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
-              {/* Multi-container tabs */}
-              {(effectiveSpacesForResult.length > 1 || (result && result.containersUsed > 1)) && (
-                <div className="flex items-center gap-1 overflow-x-auto">
-                  {Array.from(
-                    { length: Math.max(projectSpaces.length, result?.containersUsed ?? 1) },
-                    (_, cIdx) => {
-                      const cs = result?.containerSummaries[cIdx];
-                      const sp = cs?.space ?? projectSpaces[cIdx] ?? project.space;
-                      const spShort = language === 'ar' && sp.nameAr ? sp.nameAr : sp.name;
-                      const isEmptyCont = cs && cs.loadedCount === 0;
-                      return (
-                        <button
-                          key={cIdx}
-                          onClick={() => {
-                            setActiveContainerIdx(cIdx);
-                            setSelectedInstanceId(null);
-                            setActiveStepLimit(null);
-                            setIsPlayingSequence(false);
-                          }}
-                          className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold cursor-pointer whitespace-nowrap ${
-                            activeContainerIdx === cIdx
-                              ? 'bg-red-600 text-white'
-                              : isEmptyCont
-                                ? 'bg-zinc-50 text-zinc-400 border border-dashed border-zinc-300 hover:bg-zinc-100'
-                                : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-                          }`}
-                        >
-                          #{cIdx + 1} · {spShort.slice(0, 14)}
-                          {cs
-                            ? isEmptyCont
-                              ? ` (0% · ${t(language, 'emptyContainerTag')})`
-                              : ` (${cs.volumeUtilizationPct}%)`
-                            : ''}
-                        </button>
-                      );
-                    }
-                  )}
-                </div>
-              )}
+              {/* Multi-container tabs + Quick Jump for large fleets (up to 200) */}
+              {(effectiveSpacesForResult.length > 1 || (result && result.containersUsed > 1)) && (() => {
+                const totalTabs = Math.max(projectSpaces.length, result?.containersUsed ?? 1);
+                return (
+                  <div className="flex items-center gap-2 min-w-0 max-w-full">
+                    {totalTabs > 8 && (
+                      <select
+                        aria-label="Jump to Container"
+                        value={activeContainerIdx}
+                        onChange={(e) => {
+                          setActiveContainerIdx(Number(e.target.value));
+                          setSelectedInstanceId(null);
+                          setActiveStepLimit(null);
+                          setIsPlayingSequence(false);
+                        }}
+                        className="rounded-md border border-zinc-300 bg-zinc-50 px-2 py-1 text-xs font-mono font-semibold text-zinc-800 shrink-0 focus:outline-none focus:border-red-600"
+                      >
+                        {Array.from({ length: totalTabs }, (_, cIdx) => {
+                          const cs = result?.containerSummaries[cIdx];
+                          const isEmptyCont = cs && cs.loadedCount === 0;
+                          return (
+                            <option key={cIdx} value={cIdx}>
+                              #{cIdx + 1} ({cs ? (isEmptyCont ? '0%' : `${cs.volumeUtilizationPct}%`) : '...'})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    )}
+                    <div className="flex items-center gap-1 overflow-x-auto min-w-0">
+                      {Array.from({ length: totalTabs }, (_, cIdx) => {
+                        const cs = result?.containerSummaries[cIdx];
+                        const sp = cs?.space ?? projectSpaces[cIdx] ?? project.space;
+                        const spShort = language === 'ar' && sp.nameAr ? sp.nameAr : sp.name;
+                        const isEmptyCont = cs && cs.loadedCount === 0;
+                        return (
+                          <button
+                            key={cIdx}
+                            onClick={() => {
+                              setActiveContainerIdx(cIdx);
+                              setSelectedInstanceId(null);
+                              setActiveStepLimit(null);
+                              setIsPlayingSequence(false);
+                            }}
+                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
+                              activeContainerIdx === cIdx
+                                ? 'bg-red-600 text-white'
+                                : isEmptyCont
+                                  ? 'bg-zinc-50 text-zinc-400 border border-dashed border-zinc-300 hover:bg-zinc-100'
+                                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
+                            }`}
+                          >
+                            #{cIdx + 1} · {spShort.slice(0, 14)}
+                            {cs
+                              ? isEmptyCont
+                                ? ` (0% · ${t(language, 'emptyContainerTag')})`
+                                : ` (${cs.volumeUtilizationPct}%)`
+                              : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Category toggles */}
               <div className="flex flex-wrap items-center gap-1.5">

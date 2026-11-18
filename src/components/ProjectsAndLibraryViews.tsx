@@ -1082,30 +1082,49 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
 
       {maxContainerCount > 1 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-print">
-          {Array.from({ length: maxContainerCount }, (_, idx) => {
-            const cSpace =
-              result.containerSummaries[idx]?.space ??
-              project.spaces?.[idx] ??
-              project.space;
-            const cLabel =
-              language === 'ar' && cSpace.nameAr ? cSpace.nameAr : cSpace.name;
-            const isActive = safeIdx === idx;
-            return (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setContainerIdx(idx)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'border-red-600 bg-red-600 text-white'
-                    : 'border-zinc-200 bg-white text-zinc-700 hover:bg-red-50'
-                }`}
-              >
-                #{idx + 1} · {cLabel}
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-2 no-print">
+          {maxContainerCount > 8 && (
+            <select
+              aria-label="Select Container"
+              value={safeIdx}
+              onChange={(e) => setContainerIdx(Number(e.target.value))}
+              className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-mono font-semibold text-zinc-800 shrink-0 focus:outline-none focus:border-red-600"
+            >
+              {Array.from({ length: maxContainerCount }, (_, idx) => {
+                const cs = result.containerSummaries[idx];
+                return (
+                  <option key={idx} value={idx}>
+                    #{idx + 1} ({cs ? `${cs.volumeUtilizationPct}%` : '...'})
+                  </option>
+                );
+              })}
+            </select>
+          )}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 min-w-0">
+            {Array.from({ length: maxContainerCount }, (_, idx) => {
+              const cSpace =
+                result.containerSummaries[idx]?.space ??
+                project.spaces?.[idx] ??
+                project.space;
+              const cLabel =
+                language === 'ar' && cSpace.nameAr ? cSpace.nameAr : cSpace.name;
+              const isActive = safeIdx === idx;
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setContainerIdx(idx)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+                    isActive
+                      ? 'border-red-600 bg-red-600 text-white'
+                      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-red-50'
+                  }`}
+                >
+                  #{idx + 1} · {cLabel}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 

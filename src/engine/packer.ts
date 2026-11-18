@@ -1316,6 +1316,8 @@ function tryPickBestPlacementForSpec(
 
 type KeepSameContainerMode = 'none' | 'whole_first' | 'consolidate_strict';
 
+export const MAX_AUTO_CONTAINERS = 200;
+
 function packSingleStrategy(
   spaces: LoadingSpace[],
   specsList: PackageSpec[],
@@ -1326,7 +1328,8 @@ function packSingleStrategy(
   targetUtilizationPct: number,
   autoDetermineContainers: boolean,
   shouldCancel?: () => boolean,
-  keepSameMode: KeepSameContainerMode = 'none'
+  keepSameMode: KeepSameContainerMode = 'none',
+  onContainerStep?: (containerIdx: number) => void
 ): {
   containers: ContainerState[];
   unloadedCount: number;
@@ -1334,7 +1337,7 @@ function packSingleStrategy(
 } {
   const sortedSpecs = sortSpecsForStrategy(specsList, strategy, mode);
   const canAutoSpawn = autoDetermineContainers || mode === 'min_vehicles';
-  const maxContainers = canAutoSpawn ? Math.max(50, spaces.length) : spaces.length;
+  const maxContainers = canAutoSpawn ? Math.max(MAX_AUTO_CONTAINERS, spaces.length) : spaces.length;
   const targetRatio = Math.max(0.01, Math.min(1, targetUtilizationPct / 100));
 
   const remainingBySpec = new Map<string, number>();
@@ -1372,6 +1375,7 @@ function packSingleStrategy(
     if (shouldCancel && shouldCancel()) {
       return { containers, unloadedCount: totalRemaining, cancelled: true };
     }
+    onContainerStep?.(cIdx);
 
     if (cIdx >= containers.length) {
       const templateSpace = { ...(spaces[spaces.length - 1] ?? spaces[0]) };
@@ -1515,54 +1519,65 @@ function packSingleStrategy(
 
       if (strategy === 'bfd' || strategy === 'layer_module') {
         // Competitive Multi-SKU frontier selection: compare ALL unblocked SKUs and pick best wall/pocket fit!
-        let winnerChoice: {
+        type WinnerCandidate = {
           spec: PackageSpec;
           choice: NonNullable<ReturnType<typeof tryPickBestPlacementForSpec>>;
           effectiveScore: number;
-        } | null = null;
+        };
 
-        for (const spec of candidateOrder) {
-          const rem = remainingBySpec.get(spec.id) ?? 0;
-          if (rem <= 0 || blockedInContainer.has(spec.id)) continue;
+        const useTwoStageFrontier = candidateOrder.length > 18 && totalRemaining > 1200;
+        const primarySlice = useTwoStageFrontier ? candidateOrder.slice(0, 18) : candidateOrder;
+        const evaluateSlice = (slice: PackageSpec[]): WinnerCandidate | null => {
+          let bestLocal: WinnerCandidate | null = null;
+          for (const spec of slice) {
+            const rem = remainingBySpec.get(spec.id) ?? 0;
+            if (rem <= 0 || blockedInContainer.has(spec.id)) continue;
 
-          if (cont.totalWeight + spec.weight > cont.space.maxPayload + 0.01) {
-            blockedInContainer.add(spec.id);
-            continue;
+            if (cont.totalWeight + spec.weight > cont.space.maxPayload + 0.01) {
+              blockedInContainer.add(spec.id);
+              continue;
+            }
+
+            const unitVol = spec.length * spec.width * spec.height;
+            if (
+              targetRatio < 0.9999 &&
+              cont.placed.length > 0 &&
+              cont.occupiedVolume + unitVol > maxAllowedVol + EPS
+            ) {
+              blockedInContainer.add(spec.id);
+              continue;
+            }
+
+            const orients = getOrientationsForContainer(spec, cont);
+            if (orients.length === 0) {
+              blockedInContainer.add(spec.id);
+              continue;
+            }
+
+            const best = tryPickBestPlacementForSpec(cont, spec, orients, strategy, mode, dir);
+            if (!best) {
+              blockedInContainer.add(spec.id);
+              continue;
+            }
+
+            const fragilePenalty = (!spec.stackable || spec.fragile) && best.y <= EPS ? 4500 : 0;
+            const volTieBreak = -(unitVol / 1e7) * (strategy === 'layer_module' ? 40 : 120);
+            const sameContBonus =
+              keepSameMode !== 'none' &&
+              ((placedInContBySpec.get(spec.id) ?? 0) > 0 || canRemainingFitWholeInCont(spec))
+                ? -1200
+                : 0;
+            const eff = best.score + fragilePenalty + volTieBreak + sameContBonus;
+            if (!bestLocal || eff < bestLocal.effectiveScore) {
+              bestLocal = { spec, choice: best, effectiveScore: eff };
+            }
           }
+          return bestLocal;
+        };
 
-          const unitVol = spec.length * spec.width * spec.height;
-          if (
-            targetRatio < 0.9999 &&
-            cont.placed.length > 0 &&
-            cont.occupiedVolume + unitVol > maxAllowedVol + EPS
-          ) {
-            blockedInContainer.add(spec.id);
-            continue;
-          }
-
-          const orients = getOrientationsForContainer(spec, cont);
-          if (orients.length === 0) {
-            blockedInContainer.add(spec.id);
-            continue;
-          }
-
-          const best = tryPickBestPlacementForSpec(cont, spec, orients, strategy, mode, dir);
-          if (!best) {
-            blockedInContainer.add(spec.id);
-            continue;
-          }
-
-          const fragilePenalty = (!spec.stackable || spec.fragile) && best.y <= EPS ? 4500 : 0;
-          const volTieBreak = -(unitVol / 1e7) * (strategy === 'layer_module' ? 40 : 120);
-          const sameContBonus =
-            keepSameMode !== 'none' && ((placedInContBySpec.get(spec.id) ?? 0) > 0 || canRemainingFitWholeInCont(spec))
-              ? -1200
-              : 0;
-          const eff = best.score + fragilePenalty + volTieBreak + sameContBonus;
-          if (!winnerChoice || eff < winnerChoice.effectiveScore) {
-            winnerChoice = { spec, choice: best, effectiveScore: eff };
-          }
-        }
+        const winnerChoice =
+          evaluateSlice(primarySlice) ??
+          (useTwoStageFrontier ? evaluateSlice(candidateOrder.slice(18)) : null);
 
         if (winnerChoice) {
           const { spec, choice } = winnerChoice;
@@ -2058,9 +2073,30 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
     (s, p) => s + (p.length > 0 && p.width > 0 && p.height > 0 ? Math.max(0, Math.floor(p.quantity)) : 0),
     0
   );
+  const totalCargoVolMm3 = packages.reduce(
+    (s, p) =>
+      s +
+      (p.length > 0 && p.width > 0 && p.height > 0
+        ? p.length * p.width * p.height * Math.max(0, Math.floor(p.quantity))
+        : 0),
+    0
+  );
+  const primaryVolMm3 = Math.max(
+    1,
+    primarySpace.internalLength * primarySpace.internalWidth * primarySpace.internalHeight
+  );
+  const estContainers = Math.max(
+    configuredSpaces.length,
+    Math.min(MAX_AUTO_CONTAINERS, Math.ceil(totalCargoVolMm3 / (primaryVolMm3 * 0.72)))
+  );
+  const isVeryLargeFleet = estContainers >= 80 || totalRequiredPackages >= 6000;
+  const isMediumLargeFleet = estContainers >= 30 || totalRequiredPackages >= 1500;
 
-  const activeStrategies =
-    totalRequiredPackages > 1500 ? STRATEGIES.slice(0, 4) : STRATEGIES;
+  const activeStrategies = isVeryLargeFleet
+    ? STRATEGIES.slice(0, 2)
+    : isMediumLargeFleet
+      ? STRATEGIES.slice(0, 4)
+      : STRATEGIES;
 
   const candidateRuns: { strat: StrategyConfig; keepMode: KeepSameContainerMode; recordBenchmark: boolean }[] =
     preferKeepItemSameContainer
@@ -2070,21 +2106,31 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
             keepMode: 'whole_first' as KeepSameContainerMode,
             recordBenchmark: true,
           })),
-          {
-            strat: activeStrategies[0],
-            keepMode: 'consolidate_strict' as KeepSameContainerMode,
-            recordBenchmark: false,
-          },
-          {
-            strat: activeStrategies[1] ?? activeStrategies[0],
-            keepMode: 'consolidate_strict' as KeepSameContainerMode,
-            recordBenchmark: false,
-          },
-          {
-            strat: activeStrategies[5] ?? activeStrategies[0],
-            keepMode: 'consolidate_strict' as KeepSameContainerMode,
-            recordBenchmark: false,
-          },
+          ...(isMediumLargeFleet
+            ? [
+                {
+                  strat: activeStrategies[0],
+                  keepMode: 'consolidate_strict' as KeepSameContainerMode,
+                  recordBenchmark: false,
+                },
+              ]
+            : [
+                {
+                  strat: activeStrategies[0],
+                  keepMode: 'consolidate_strict' as KeepSameContainerMode,
+                  recordBenchmark: false,
+                },
+                {
+                  strat: activeStrategies[1] ?? activeStrategies[0],
+                  keepMode: 'consolidate_strict' as KeepSameContainerMode,
+                  recordBenchmark: false,
+                },
+                {
+                  strat: activeStrategies[5] ?? activeStrategies[0],
+                  keepMode: 'consolidate_strict' as KeepSameContainerMode,
+                  recordBenchmark: false,
+                },
+              ]),
         ]
       : activeStrategies.map((strat) => ({
           strat,
@@ -2108,7 +2154,9 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
   for (let i = 0; i < candidateRuns.length; i++) {
     if (shouldCancel && shouldCancel()) break;
     const { strat, keepMode, recordBenchmark } = candidateRuns[i];
-    onProgress?.(Math.round(((i + 0.3) / candidateRuns.length) * 85), strat.name);
+    const basePct = (i / candidateRuns.length) * 85;
+    const spanPct = (1 / candidateRuns.length) * 85;
+    onProgress?.(Math.round(basePct + spanPct * 0.1), strat.name);
 
     const t0 = performance.now();
     const run = packSingleStrategy(
@@ -2121,7 +2169,13 @@ export function runOptimization(options: OptimizeOptions): OptimizationResult {
       effectiveTargetPct,
       autoDetermineContainers,
       shouldCancel,
-      keepMode
+      keepMode,
+      (cIdx) => {
+        if (estContainers >= 8 && (cIdx === 0 || cIdx % 4 === 0)) {
+          const frac = Math.min(0.95, (cIdx + 1) / Math.max(1, estContainers));
+          onProgress?.(Math.round(basePct + spanPct * frac), strat.name);
+        }
+      }
     );
     if (run.cancelled) break;
 
